@@ -1,6 +1,17 @@
 {
-    "version": "",
-    "thumbnail": "",
-    "id": "",
-    "name": ""
+    "version": "1.0.0",
+    "thumbnail": "assets/thumbnail.png",
+    "id": "com_oparada_VolumeControlPlus",
+    "name": "Volume Control Plus",
+    "descriptions": {
+        "en_US": "Official-style Volume Control for Stream Deck Plus, allowing volume adjustment via dials and mute toggle via push/touch."
+    },
+    "short-descriptions": {
+        "en_US": "Stream Deck Plus Volume Control"
+    },
+    "tags": "Audio",
+    "minimum-version": "1.0.0",
+    "app-version": "1.0.0-alpha",
+    "description": "Official-style Volume Control for Stream Deck Plus, allowing volume adjustment via dials and mute toggle via push/touch.",
+    "short-description": "Stream Deck Plus Volume Control"
 }
