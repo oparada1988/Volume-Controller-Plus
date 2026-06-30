@@ -164,9 +164,14 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         if not settings.get("device_type"):
             settings["device_type"] = "sink"
-        if not settings.get("pipewire_device_id"):
-            settings["pipewire_device_id"] = "@DEFAULT_AUDIO_SINK@"
-            settings["pipewire_device_name"] = "Default Sink"
+            
+        dtype = settings.get("device_type", "sink")
+        sinks, sources = self.get_pipewire_devices()
+        devices = sinks if dtype == "sink" else sources
+        
+        if not settings.get("pipewire_device_id") and devices:
+            settings["pipewire_device_id"] = devices[0][0]
+            settings["pipewire_device_name"] = devices[0][1]
             self.set_settings(settings)
             
         vol, mute = self.get_system_volume_status()
@@ -625,12 +630,10 @@ class VolumeControl(ActionBase):
         
         self.pw_devices_map = []
         if dtype == "sink":
-            self.pw_devices_map.append(("@DEFAULT_AUDIO_SINK@", "Default Output (Sink)"))
             sinks, _ = self.get_pipewire_devices()
             for s_id, s_name in sinks:
                 self.pw_devices_map.append((s_id, s_name))
         else:
-            self.pw_devices_map.append(("@DEFAULT_AUDIO_SOURCE@", "Default Input (Source)"))
             _, sources = self.get_pipewire_devices()
             for s_id, s_name in sources:
                 self.pw_devices_map.append((s_id, s_name))
@@ -642,8 +645,17 @@ class VolumeControl(ActionBase):
         self.pw_device_selector.set_model(self.pw_device_model)
         
         current_pw_id = settings.get("pipewire_device_id")
-        if not current_pw_id:
-            current_pw_id = "@DEFAULT_AUDIO_SINK@" if dtype == "sink" else "@DEFAULT_AUDIO_SOURCE@"
+        if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map):
+            if self.pw_devices_map:
+                current_pw_id = self.pw_devices_map[0][0]
+                settings["pipewire_device_id"] = current_pw_id
+                settings["pipewire_device_name"] = self.pw_devices_map[0][1]
+                self.set_settings(settings)
+            else:
+                current_pw_id = ""
+                settings["pipewire_device_id"] = ""
+                settings["pipewire_device_name"] = ""
+                self.set_settings(settings)
             
         selected_index = 0
         for idx, (pw_id, display_name) in enumerate(self.pw_devices_map):
@@ -809,10 +821,15 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         settings["device_type"] = new_type
         
-        # Reset default device ID based on new type
-        new_default = "@DEFAULT_AUDIO_SINK@" if new_type == "sink" else "@DEFAULT_AUDIO_SOURCE@"
-        settings["pipewire_device_id"] = new_default
-        settings["pipewire_device_name"] = "Default Output" if new_type == "sink" else "Default Input"
+        # Select first available device for the new type
+        sinks, sources = self.get_pipewire_devices()
+        devices = sinks if new_type == "sink" else sources
+        if devices:
+            settings["pipewire_device_id"] = devices[0][0]
+            settings["pipewire_device_name"] = devices[0][1]
+        else:
+            settings["pipewire_device_id"] = ""
+            settings["pipewire_device_name"] = ""
         self.set_settings(settings)
         
         # Rebuild the Device Selection dropdown items
