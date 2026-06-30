@@ -201,11 +201,7 @@ class VolumeControl(ActionBase):
         else:
             super().event_callback(event, data)
 
-    def get_mixer_name(self) -> str:
-        settings = self.get_settings()
-        if settings is not None:
-            return settings.get("mixer_name", "Master")
-        return "Master"
+
 
     def get_step_size(self) -> int:
         settings = self.get_settings()
@@ -219,11 +215,7 @@ class VolumeControl(ActionBase):
 
     def get_configured_device_id(self) -> str:
         settings = self.get_settings() or {}
-        backend = settings.get("audio_backend", "pipewire")
-        if backend == "pipewire":
-            return settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
-        else:
-            return "@DEFAULT_AUDIO_SINK@"
+        return settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
 
     def restart_peak_monitor(self):
         device_id = self.get_configured_device_id()
@@ -271,11 +263,37 @@ class VolumeControl(ActionBase):
         img = self.generate_volume_image(self.current_volume, self.last_mute, peak)
         GLib.idle_add(self.set_media, img)
 
+    def run_cmd(self, cmd: list) -> str:
+        if os.path.exists("/.flatpak-info"):
+            full_cmd = ["flatpak-spawn", "--host"] + cmd
+        else:
+            full_cmd = cmd
+        try:
+            return subprocess.check_output(full_cmd, text=True)
+        except Exception:
+            try:
+                return subprocess.check_output(cmd, text=True)
+            except Exception:
+                return ""
+
+    def execute_cmd(self, cmd: list) -> None:
+        if os.path.exists("/.flatpak-info"):
+            full_cmd = ["flatpak-spawn", "--host"] + cmd
+        else:
+            full_cmd = cmd
+        try:
+            subprocess.run(full_cmd, check=True)
+        except Exception:
+            try:
+                subprocess.run(cmd, check=True)
+            except Exception:
+                pass
+
     def get_pipewire_devices(self) -> "tuple[list, list]":
         sinks = []
         sources = []
         try:
-            output = subprocess.check_output(["wpctl", "status"], text=True)
+            output = self.run_cmd(["wpctl", "status"])
             current_section = None
             for line in output.splitlines():
                 line_strip = line.strip()
@@ -309,34 +327,9 @@ class VolumeControl(ActionBase):
             pass
         return sinks, sources
 
-    def get_alsa_status(self) -> "tuple[int, bool]":
-        mixer = self.get_mixer_name()
-        try:
-            output = subprocess.check_output(["amixer", "sget", mixer], text=True)
-            volume = 0
-            mute = False
-            for line in output.splitlines():
-                if "Playback" in line and "[" in line:
-                    start_vol = line.find("[")
-                    end_vol = line.find("]", start_vol)
-                    if start_vol != -1 and end_vol != -1:
-                        vol_str = line[start_vol+1:end_vol].replace("%", "")
-                        if vol_str.isdigit():
-                            volume = int(vol_str)
-                    
-                    start_mute = line.find("[", end_vol+1)
-                    end_mute = line.find("]", start_mute)
-                    if start_mute != -1 and end_mute != -1:
-                        mute_str = line[start_mute+1:end_mute]
-                        mute = (mute_str == "off")
-                    break
-            return volume, mute
-        except Exception:
-            return 50, False
-
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
         try:
-            output = subprocess.check_output(["wpctl", "get-volume", device_id], text=True).strip()
+            output = self.run_cmd(["wpctl", "get-volume", device_id]).strip()
             parts = output.split()
             volume = 0
             mute = False
@@ -353,28 +346,16 @@ class VolumeControl(ActionBase):
             return 50, False
 
     def get_system_volume_status(self) -> "tuple[int, bool]":
-        settings = self.get_settings() or {}
-        backend = settings.get("audio_backend", "pipewire")
-        if backend == "pipewire":
-            device_id = settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
-            return self.get_pipewire_status(device_id)
-        else:
-            return self.get_alsa_status()
-
-    def change_alsa_volume(self, delta: int) -> None:
-        mixer = self.get_mixer_name()
-        sign = "+" if delta >= 0 else "-"
-        cmd = f"{abs(delta)}%{sign}"
-        try:
-            subprocess.run(["amixer", "sset", mixer, cmd], check=True)
-        except Exception:
-            pass
+        device_id = self.get_configured_device_id()
+        return self.get_pipewire_status(device_id)
 
     def change_pipewire_volume(self, device_id: str, delta: int) -> None:
-        sign = "+" if delta >= 0 else "-"
-        val = f"{abs(delta) / 100.0:.2f}{sign}"
+        # Get current volume first to prevent overflow/underflow on set
+        vol, muted = self.get_pipewire_status(device_id)
+        new_vol = max(0, min(100, vol + delta))
+        val = f"{new_vol / 100.0:.2f}"
         try:
-            subprocess.run(["wpctl", "set-volume", "-l", "1.0", device_id, val], check=True)
+            self.execute_cmd(["wpctl", "set-volume", "-l", "1.0", device_id, val])
         except Exception:
             pass
 
@@ -384,24 +365,12 @@ class VolumeControl(ActionBase):
         threading.Thread(target=self._change_volume_bg, args=(delta,), daemon=True).start()
 
     def _change_volume_bg(self, delta: int):
-        settings = self.get_settings() or {}
-        backend = settings.get("audio_backend", "pipewire")
-        if backend == "pipewire":
-            device_id = settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
-            self.change_pipewire_volume(device_id, delta)
-        else:
-            self.change_alsa_volume(delta)
-
-    def toggle_alsa_mute(self) -> None:
-        mixer = self.get_mixer_name()
-        try:
-            subprocess.run(["amixer", "sset", mixer, "toggle"], check=True)
-        except Exception:
-            pass
+        device_id = self.get_configured_device_id()
+        self.change_pipewire_volume(device_id, delta)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
         try:
-            subprocess.run(["wpctl", "set-mute", device_id, "toggle"], check=True)
+            self.execute_cmd(["wpctl", "set-mute", device_id, "toggle"])
         except Exception:
             pass
 
@@ -411,36 +380,8 @@ class VolumeControl(ActionBase):
         threading.Thread(target=self._toggle_mute_bg, daemon=True).start()
 
     def _toggle_mute_bg(self):
-        settings = self.get_settings() or {}
-        backend = settings.get("audio_backend", "pipewire")
-        if backend == "pipewire":
-            device_id = settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
-            self.toggle_pipewire_mute(device_id)
-        else:
-            self.toggle_alsa_mute()
-
-    def poll_volume_loop(self) -> None:
-        while self.running:
-            try:
-                self.update_volume_status()
-            except Exception:
-                pass
-            time.sleep(0.3)
-
-    def update_volume_status(self) -> None:
-        if not self.get_is_present():
-            return
-        
-        volume, mute = self.get_system_volume_status()
-        if volume != self.last_volume or mute != self.last_mute:
-            self.last_volume = volume
-            self.last_mute = mute
-            
-            # Generate the volume display image
-            img = self.generate_volume_image(volume, mute)
-            
-            # Use GLib.idle_add to update UI thread-safely in GTK
-            GLib.idle_add(self.set_media, img)
+        device_id = self.get_configured_device_id()
+        self.toggle_pipewire_mute(device_id)
 
     def load_icon_image(self, path: str) -> Image.Image | None:
         if not path or not os.path.exists(path):
@@ -564,11 +505,7 @@ class VolumeControl(ActionBase):
         if custom_name:
             title_text = custom_name
         else:
-            backend = settings.get("audio_backend", "pipewire")
-            if backend == "pipewire":
-                title_text = settings.get("pipewire_device_name", "Default Sink")
-            else:
-                title_text = self.get_mixer_name()
+            title_text = settings.get("pipewire_device_name", "Default Sink")
             
         if len(title_text) > 16:
             title_text = title_text[:14] + ".."
@@ -684,7 +621,6 @@ class VolumeControl(ActionBase):
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         settings = self.get_settings() or {}
-        backend = settings.get("audio_backend", "pipewire")
 
         # 1. Custom Name Row
         self.custom_name_row = Adw.EntryRow(
@@ -692,18 +628,7 @@ class VolumeControl(ActionBase):
             text=settings.get("custom_name", "")
         )
 
-        # 2. Backend Selector
-        self.backend_model = Gtk.StringList()
-        self.backend_model.append("PipeWire (wpctl)")
-        self.backend_model.append("ALSA (amixer)")
-        self.backend_selector = Adw.ComboRow(
-            model=self.backend_model,
-            title="Audio Backend",
-            subtitle="Choose PipeWire or ALSA control"
-        )
-        self.backend_selector.set_selected(0 if backend == "pipewire" else 1)
-
-        # 3. PipeWire Devices Selector
+        # 2. PipeWire Devices Selector
         self.pw_devices_map = [
             ("@DEFAULT_AUDIO_SINK@", "Default Sink"),
             ("@DEFAULT_AUDIO_SOURCE@", "Default Source")
@@ -730,19 +655,8 @@ class VolumeControl(ActionBase):
                 selected_index = idx
                 break
         self.pw_device_selector.set_selected(selected_index)
-
-        # 4. Mixer name selector (ALSA)
-        self.mixer_row = Adw.EntryRow(
-            title="Mixer Device Name",
-            text=self.get_mixer_name()
-        )
         
-        # Set visibility based on backend
-        is_pw = (backend == "pipewire")
-        self.pw_device_selector.set_visible(is_pw)
-        self.mixer_row.set_visible(not is_pw)
-        
-        # 5. Step size selector
+        # 3. Step size selector
         self.step_model = Gtk.StringList()
         step_sizes = ["1%", "2%", "5%", "10%"]
         for size in step_sizes:
@@ -761,7 +675,7 @@ class VolumeControl(ActionBase):
         else:
             self.step_selector.set_selected(2) # Default to 5%
             
-        # 6. Custom Icon selection
+        # 4. Custom Icon selection
         self.icon_row = Adw.ActionRow(
             title="Custom Icon",
             subtitle="Select a custom icon to display"
@@ -775,7 +689,7 @@ class VolumeControl(ActionBase):
         self.clear_icon_button.set_valign(Gtk.Align.CENTER)
         self.icon_row.add_suffix(self.clear_icon_button)
         
-        # 7. Icon Scale slider (Wrapped in Gtk.Box and PreferencesRow to allow dragging)
+        # 5. Icon Scale slider (Wrapped in Gtk.Box and PreferencesRow to allow dragging)
         self.scale_row = Adw.PreferencesRow()
         self.scale_row.set_activatable(False)
         scale_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -796,7 +710,7 @@ class VolumeControl(ActionBase):
         scale_box.append(self.scale_slider)
         self.scale_row.set_child(scale_box)
 
-        # 8. Custom Font File (*.ttf) entry row showing basename, non-editable
+        # 6. Custom Font File (*.ttf) entry row showing basename, non-editable
         self.font_row = Adw.EntryRow(
             title="Custom Font File (*.ttf)",
             text=os.path.basename(self.get_font_path())
@@ -806,7 +720,7 @@ class VolumeControl(ActionBase):
         self.choose_font_button.set_valign(Gtk.Align.CENTER)
         self.font_row.add_suffix(self.choose_font_button)
 
-        # 9. Title Text Size slider (Wrapped in Gtk.Box and PreferencesRow to allow dragging)
+        # 7. Title Text Size slider (Wrapped in Gtk.Box and PreferencesRow to allow dragging)
         self.title_size_row = Adw.PreferencesRow()
         self.title_size_row.set_activatable(False)
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -829,9 +743,7 @@ class VolumeControl(ActionBase):
         
         # Connect changes to save settings
         self.custom_name_row.connect("notify::text", self.on_custom_name_changed)
-        self.backend_selector.connect("notify::selected-item", self.on_backend_changed)
         self.pw_device_selector.connect("notify::selected-item", self.on_pw_device_changed)
-        self.mixer_row.connect("notify::text", self.on_mixer_changed)
         self.step_selector.connect("notify::selected-item", self.on_step_changed)
         self.choose_icon_button.connect("clicked", self.on_choose_icon_clicked)
         self.clear_icon_button.connect("clicked", self.on_clear_icon_clicked)
@@ -846,9 +758,7 @@ class VolumeControl(ActionBase):
         
         return [
             self.custom_name_row,
-            self.backend_selector,
             self.pw_device_selector,
-            self.mixer_row,
             self.step_selector,
             self.icon_row,
             self.scale_row,
@@ -862,20 +772,6 @@ class VolumeControl(ActionBase):
         self.set_settings(settings)
         self.update_ui_rendering()
 
-    def on_backend_changed(self, combo, *args):
-        selected_index = combo.get_selected()
-        is_pw = (selected_index == 0)
-        settings = self.get_settings() or {}
-        settings["audio_backend"] = "pipewire" if is_pw else "alsa"
-        self.set_settings(settings)
-        
-        # Toggle visibility
-        self.pw_device_selector.set_visible(is_pw)
-        self.mixer_row.set_visible(not is_pw)
-        
-        self.restart_peak_monitor()
-        self.update_ui_rendering()
-
     def on_pw_device_changed(self, combo, *args):
         selected_index = combo.get_selected()
         if 0 <= selected_index < len(self.pw_devices_map):
@@ -887,12 +783,6 @@ class VolumeControl(ActionBase):
             
             self.restart_peak_monitor()
             self.update_ui_rendering()
-
-    def on_mixer_changed(self, entry, *args):
-        settings = self.get_settings() or {}
-        settings["mixer_name"] = entry.get_text()
-        self.set_settings(settings)
-        self.update_ui_rendering()
 
     def on_step_changed(self, combo, *args):
         settings = self.get_settings() or {}
