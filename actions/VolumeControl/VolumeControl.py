@@ -494,7 +494,9 @@ class VolumeControl(ActionBase):
             else:
                 font_title = ImageFont.load_default()
                 font_vol = ImageFont.load_default()
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             font_title = ImageFont.load_default()
             font_vol = ImageFont.load_default()
 
@@ -1048,11 +1050,11 @@ class VolumeControl(ActionBase):
             dialog.set_font(current_font)
             
         def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.ACCEPT:
+            if response_id in [Gtk.ResponseType.ACCEPT, Gtk.ResponseType.OK]:
                 font_name = dialog.get_font()
                 GLib.idle_add(self.update_font_setting, font_name)
             dialog.destroy()
             
         dialog.connect("response", on_response)
-        dialog.show()
+        dialog.present()
 
