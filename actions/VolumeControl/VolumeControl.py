@@ -24,23 +24,29 @@ import globals as gl
 class VolumePeakMonitor:
     def __init__(self):
         self.device_id = "@DEFAULT_AUDIO_SINK@"
+        self.is_source = False
         self.peak = 0.0
         self.running = False
         self.proc = None
         self.thread = None
         self.lock = threading.Lock()
 
-    def start(self, device_id: str):
-        if self.running and self.device_id == device_id:
+    def start(self, device_id: str, is_source: bool = False):
+        if self.running and self.device_id == device_id and self.is_source == is_source:
             return
         self.stop()
         
         self.device_id = device_id
+        self.is_source = is_source
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def _run(self):
+        target_device = self.device_id
+        if not self.is_source:
+            target_device = self.device_id + ".monitor"
+            
         cmd = [
             'parecord',
             '--raw',
@@ -49,7 +55,7 @@ class VolumePeakMonitor:
             '--rate=44100',
             '--latency-msec=30',
             '--process-time-msec=10',
-            '--device=' + self.device_id
+            '--device=' + target_device
         ]
         try:
             self.proc = subprocess.Popen(
@@ -228,11 +234,19 @@ class VolumeControl(ActionBase):
 
     def get_configured_device_id(self) -> str:
         settings = self.get_settings() or {}
-        return settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
+        dev_id = settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
+        if dev_id == "@DEFAULT_AUDIO_SINK@":
+            return "@DEFAULT_SINK@"
+        elif dev_id == "@DEFAULT_AUDIO_SOURCE@":
+            return "@DEFAULT_SOURCE@"
+        return dev_id
 
     def restart_peak_monitor(self):
         device_id = self.get_configured_device_id()
-        self.peak_monitor.start(device_id)
+        settings = self.get_settings() or {}
+        dtype = settings.get("device_type", "sink")
+        is_source = (dtype == "source")
+        self.peak_monitor.start(device_id, is_source)
 
     def on_tick_update(self) -> bool:
         if not self.running:
