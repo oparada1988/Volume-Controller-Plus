@@ -39,7 +39,19 @@ class VolumeControl(ActionBase):
     def on_disconnect(self) -> None:
         self.running = False
 
+    def _raw_event_callback(self, event: InputEvent, data: dict = None):
+        # Directly intercept physical dial turning and press events
+        if event == Input.Dial.Events.TURN_CW:
+            self.change_volume(self.get_step_size())
+        elif event == Input.Dial.Events.TURN_CCW:
+            self.change_volume(-self.get_step_size())
+        elif event in [Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS]:
+            self.toggle_mute()
+        else:
+            super()._raw_event_callback(event, data)
+
     def event_callback(self, event: InputEvent, data: dict = None):
+        # Intercept legacy callback in case EventManager configuration calls it
         if event == Input.Dial.Events.TURN_CW:
             self.change_volume(self.get_step_size())
         elif event == Input.Dial.Events.TURN_CCW:
@@ -98,6 +110,8 @@ class VolumeControl(ActionBase):
         cmd = f"{abs(delta)}%{sign}"
         try:
             subprocess.run(["amixer", "sset", mixer, cmd], check=True)
+            self.last_volume = -1
+            self.last_mute = None
             self.update_volume_status()
         except Exception:
             pass
@@ -106,6 +120,8 @@ class VolumeControl(ActionBase):
         mixer = self.get_mixer_name()
         try:
             subprocess.run(["amixer", "sset", mixer, "toggle"], check=True)
+            self.last_volume = -1
+            self.last_mute = None
             self.update_volume_status()
         except Exception:
             pass
@@ -166,57 +182,7 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         custom_icon_path = settings.get("custom_icon", "")
         icon_scale = settings.get("icon_scale", 1.0)
-        
-        icon_drawn = False
-        if custom_icon_path:
-            icon_img = self.load_icon_image(custom_icon_path)
-            if icon_img is not None:
-                icon_img = icon_img.convert("RGBA")
-                base_size = 20  # Speaker container base size
-                scaled_size = int(base_size * icon_scale)
-                scaled_size = max(4, min(scaled_size, 60))
-                icon_img = icon_img.resize((scaled_size, scaled_size))
-                
-                # Center around the speaker area (spk_x=22, spk_y=17)
-                cx_icon, cy_icon = 22, 17
-                x_start = cx_icon - scaled_size // 2
-                y_start = cy_icon - scaled_size // 2
-                
-                if is_muted:
-                    r, g, b, a = icon_img.split()
-                    a = a.point(lambda i: int(i * 0.4))
-                    icon_img = Image.merge("RGBA", (r, g, b, a))
-                
-                img.paste(icon_img, (x_start, y_start), icon_img)
-                
-                if is_muted:
-                    # Red diagonal mute line over the icon
-                    draw.line([(x_start - 2, y_start - 2), (x_start + scaled_size + 2, y_start + scaled_size + 2)], fill=(239, 68, 68, 255), width=2)
-                icon_drawn = True
 
-        if not icon_drawn:
-            # Speaker Icon (custom slate-blue speaker with cyan/blue waves)
-            spk_x, spk_y = 12, 10
-            spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
-            
-            # Speaker body
-            draw.rectangle([(spk_x, spk_y + 4), (spk_x + 5, spk_y + 10)], fill=spk_color)
-            # Speaker cone
-            draw.polygon([(spk_x + 5, spk_y + 4), (spk_x + 10, spk_y + 0), (spk_x + 10, spk_y + 14), (spk_x + 5, spk_y + 10)], fill=spk_color)
-            
-            if is_muted:
-                # Red diagonal mute line
-                draw.line([(spk_x - 2, spk_y + 2), (spk_x + 16, spk_y + 12)], fill=(239, 68, 68, 255), width=2)
-            else:
-                # Waves in bright blue/cyan (3 waves matching g19.png)
-                wave_color = (0, 168, 255, 255)
-                # Wave 1 (small)
-                draw.arc([(spk_x + 3, spk_y + 2), (spk_x + 13, spk_y + 12)], start=-45, end=45, fill=wave_color, width=2)
-                # Wave 2 (medium)
-                draw.arc([(spk_x, spk_y - 1), (spk_x + 18, spk_y + 15)], start=-45, end=45, fill=wave_color, width=2)
-                # Wave 3 (large)
-                draw.arc([(spk_x - 3, spk_y - 4), (spk_x + 23, spk_y + 18)], start=-45, end=45, fill=wave_color, width=2)
-            
         # Fonts
         font_path = settings.get("font_path", "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf")
         title_font_size = int(settings.get("title_font_size", 13))
@@ -236,21 +202,93 @@ class VolumeControl(ActionBase):
         except Exception:
             font_title = ImageFont.load_default()
             font_vol = ImageFont.load_default()
-            
-        # Title Text (light silver, bold)
-        title_text = self.get_mixer_name()
-        if len(title_text) > 12:
-            title_text = title_text[:10] + ".."
-        draw.text((38, 9), title_text, font=font_title, fill=(220, 222, 230, 255))
-        
-        # Volume Text (bold white)
+
+        # Calculate volume text width to determine boundaries
         vol_text = "MUTE" if is_muted else f"{volume}%"
         vol_color = (239, 68, 68, 255) if is_muted else (255, 255, 255, 255)
+        
         try:
-            text_w = font_vol.getlength(vol_text)
+            vol_w = font_vol.getlength(vol_text)
         except Exception:
-            text_w = 40
-        draw.text((188 - text_w, 5), vol_text, font=font_vol, fill=vol_color)
+            vol_w = 40
+            
+        # Draw Volume Text (right-aligned, vertically centered at y=18)
+        try:
+            draw.text((188, 18), vol_text, font=font_vol, fill=vol_color, anchor="rm")
+        except TypeError:
+            draw.text((188 - vol_w, 18 - 10), vol_text, font=font_vol, fill=vol_color)
+        
+        # Icon placement area
+        icon_drawn = False
+        icon_w = 20  # Base width of the icon area
+        if custom_icon_path:
+            icon_img = self.load_icon_image(custom_icon_path)
+            if icon_img is not None:
+                icon_img = icon_img.convert("RGBA")
+                base_size = 20  # Base size
+                scaled_size = int(base_size * icon_scale)
+                scaled_size = max(4, min(scaled_size, 60))
+                icon_img = icon_img.resize((scaled_size, scaled_size))
+                
+                # Center vertically at y=18, left-aligned at x=12
+                x_start = 12
+                y_start = 18 - scaled_size // 2
+                
+                if is_muted:
+                    r, g, b, a = icon_img.split()
+                    a = a.point(lambda i: int(i * 0.4))
+                    icon_img = Image.merge("RGBA", (r, g, b, a))
+                
+                img.paste(icon_img, (x_start, y_start), icon_img)
+                
+                if is_muted:
+                    # Red diagonal mute line over the icon
+                    draw.line([(x_start - 2, y_start - 2), (x_start + scaled_size + 2, y_start + scaled_size + 2)], fill=(239, 68, 68, 255), width=2)
+                
+                icon_drawn = True
+                icon_w = scaled_size
+
+        if not icon_drawn:
+            # Default Speaker Icon (slate-blue speaker with cyan/blue waves)
+            spk_x, spk_y = 12, 11
+            spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
+            
+            # Speaker body (centered vertically at y=18)
+            draw.rectangle([(spk_x, spk_y + 4), (spk_x + 5, spk_y + 10)], fill=spk_color)
+            # Speaker cone
+            draw.polygon([(spk_x + 5, spk_y + 4), (spk_x + 10, spk_y + 0), (spk_x + 10, spk_y + 14), (spk_x + 5, spk_y + 10)], fill=spk_color)
+            
+            if is_muted:
+                # Red diagonal mute line
+                draw.line([(spk_x - 2, spk_y + 2), (spk_x + 16, spk_y + 12)], fill=(239, 68, 68, 255), width=2)
+            else:
+                # Waves in bright blue/cyan (3 waves matching g2.png)
+                wave_color = (0, 168, 255, 255)
+                # Wave 1 (small)
+                draw.arc([(spk_x + 3, spk_y + 2), (spk_x + 13, spk_y + 12)], start=-45, end=45, fill=wave_color, width=2)
+                # Wave 2 (medium)
+                draw.arc([(spk_x, spk_y - 1), (spk_x + 18, spk_y + 15)], start=-45, end=45, fill=wave_color, width=2)
+                # Wave 3 (large)
+                draw.arc([(spk_x - 3, spk_y - 4), (spk_x + 23, spk_y + 18)], start=-45, end=45, fill=wave_color, width=2)
+            icon_w = 26  # default speaker width including waves
+
+        # Draw Title Text (centered horizontally in the remaining header space between icon and volume text)
+        title_text = self.get_mixer_name()
+        if len(title_text) > 16:
+            title_text = title_text[:14] + ".."
+            
+        left_bound = 12 + icon_w + 6
+        right_bound = 188 - vol_w - 6
+        center_x = left_bound + (right_bound - left_bound) // 2
+        
+        try:
+            draw.text((center_x, 18), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="mm")
+        except TypeError:
+            try:
+                title_w = font_title.getlength(title_text)
+            except Exception:
+                title_w = len(title_text) * 7
+            draw.text((center_x - title_w // 2, 18 - 7), title_text, font=font_title, fill=(220, 222, 230, 255))
         
         # 3. Dial Geometry (Restored to manual knob core layout)
         cx, cy = 100, 92
