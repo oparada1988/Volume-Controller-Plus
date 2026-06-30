@@ -279,96 +279,87 @@ class VolumeControl(ActionBase):
         GLib.idle_add(self.set_media, img)
 
     def run_cmd(self, cmd: list) -> str:
-        if os.path.exists("/.flatpak-info"):
-            full_cmd = ["flatpak-spawn", "--host"] + cmd
-        else:
-            full_cmd = cmd
         try:
-            return subprocess.check_output(full_cmd, text=True)
+            return subprocess.check_output(cmd, text=True)
         except Exception:
-            try:
-                return subprocess.check_output(cmd, text=True)
-            except Exception:
-                return ""
+            return ""
 
     def execute_cmd(self, cmd: list) -> None:
-        if os.path.exists("/.flatpak-info"):
-            full_cmd = ["flatpak-spawn", "--host"] + cmd
-        else:
-            full_cmd = cmd
         try:
-            subprocess.run(full_cmd, check=True)
+            subprocess.run(cmd, check=True)
         except Exception:
-            try:
-                subprocess.run(cmd, check=True)
-            except Exception:
-                pass
+            pass
+
+    def parse_pactl_list(self, output: str) -> list:
+        devices = []
+        current_name = None
+        current_desc = None
+        for line in output.splitlines():
+            line_strip = line.strip()
+            if line_strip.startswith("Name:"):
+                current_name = line_strip.split("Name:", 1)[1].strip()
+            elif line_strip.startswith("Description:"):
+                current_desc = line_strip.split("Description:", 1)[1].strip()
+                if current_name and current_desc:
+                    devices.append((current_name, current_desc))
+                    current_name = None
+                    current_desc = None
+        return devices
 
     def get_pipewire_devices(self) -> "tuple[list, list]":
         sinks = []
         sources = []
         try:
-            output = self.run_cmd(["wpctl", "status"])
-            current_section = None
-            import re
-            for line in output.splitlines():
-                line_strip = line.strip()
-                if not line_strip:
-                    continue
-                if "Sinks:" in line:
-                    current_section = "sinks"
-                    continue
-                elif "Sources:" in line:
-                    current_section = "sources"
-                    continue
-                elif ":" in line and not any(s in line for s in ["Sinks", "Sources"]):
-                    if current_section in ["sinks", "sources"]:
-                        current_section = None
-                        
-                if current_section in ["sinks", "sources"]:
-                    match = re.search(r'(\d+)\.\s*([^\[]+)', line_strip)
-                    if match:
-                        id_part = match.group(1)
-                        name_part = match.group(2).strip()
-                        if current_section == "sinks":
-                            sinks.append((id_part, name_part))
-                        else:
-                            sources.append((id_part, name_part))
+            sinks_out = self.run_cmd(["pactl", "list", "sinks"])
+            sinks = self.parse_pactl_list(sinks_out)
+        except Exception:
+            pass
+        try:
+            sources_out = self.run_cmd(["pactl", "list", "sources"])
+            sources = self.parse_pactl_list(sources_out)
+            # Filter out monitors (which are internal loopbacks of outputs)
+            sources = [(n, d) for n, d in sources if not n.endswith(".monitor")]
         except Exception:
             pass
         return sinks, sources
 
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
+        settings = self.get_settings() or {}
+        dtype = settings.get("device_type", "sink")
+        cmd_type = "sink" if dtype == "sink" else "source"
+        
+        volume = self.current_volume
+        mute = self.last_mute
+        
         try:
-            output = self.run_cmd(["wpctl", "get-volume", device_id])
-            if not output:
-                return self.current_volume, self.last_mute
-            output = output.strip()
-            parts = output.split()
-            volume = self.current_volume
-            mute = self.last_mute
-            if len(parts) >= 2:
-                vol_str = parts[1]
-                try:
-                    volume = int(float(vol_str) * 100)
-                except ValueError:
-                    pass
-            if "[MUTED]" in output:
+            # Query mute status
+            mute_out = self.run_cmd(["pactl", f"get-{cmd_type}-mute", device_id]).strip()
+            if "Mute: yes" in mute_out:
                 mute = True
-            else:
+            elif "Mute: no" in mute_out:
                 mute = False
-            return volume, mute
+                
+            # Query volume status
+            vol_out = self.run_cmd(["pactl", f"get-{cmd_type}-volume", device_id]).strip()
+            import re
+            match = re.search(r'/\s*(\d+)%', vol_out)
+            if match:
+                volume = int(match.group(1))
         except Exception:
-            return self.current_volume, self.last_mute
+            pass
+            
+        return volume, mute
 
     def get_system_volume_status(self) -> "tuple[int, bool]":
         device_id = self.get_configured_device_id()
         return self.get_pipewire_status(device_id)
 
     def change_pipewire_volume(self, device_id: str, target_vol: int) -> None:
-        val = f"{target_vol / 100.0:.2f}"
+        settings = self.get_settings() or {}
+        dtype = settings.get("device_type", "sink")
+        cmd_type = "sink" if dtype == "sink" else "source"
         try:
-            self.execute_cmd(["wpctl", "set-volume", "-l", "1.0", device_id, val])
+            self.execute_cmd(["pactl", f"set-{cmd_type}-volume", device_id, f"{target_vol}%"])
         except Exception:
             pass
 
@@ -382,8 +373,11 @@ class VolumeControl(ActionBase):
         self.change_pipewire_volume(device_id, target_vol)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
+        settings = self.get_settings() or {}
+        dtype = settings.get("device_type", "sink")
+        cmd_type = "sink" if dtype == "sink" else "source"
         try:
-            self.execute_cmd(["wpctl", "set-mute", device_id, "toggle"])
+            self.execute_cmd(["pactl", f"set-{cmd_type}-mute", device_id, "toggle"])
         except Exception:
             pass
 
