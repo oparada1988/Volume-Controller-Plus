@@ -452,21 +452,31 @@ class VolumeControl(ActionBase):
         icon_scale = settings.get("icon_scale", 1.0)
 
         # Fonts
-        font_path = settings.get("font_path", "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf")
-        title_font_size = int(settings.get("title_font_size", 14)) # Made bigger as requested
-        vol_font_size = 28  # Static size of 28px (made bigger as requested)
+        font_path = settings.get("font_path", "")
+        title_font_size = int(settings.get("title_font_size", 14))
+        vol_font_size = 28
+        
+        font_file = None
+        if font_path and os.path.exists(font_path):
+            font_file = font_path
+        else:
+            for path in [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            ]:
+                if os.path.exists(path):
+                    font_file = path
+                    break
+                    
         try:
-            if font_path and os.path.exists(font_path):
-                font_title = ImageFont.truetype(font_path, title_font_size)
-                font_vol = ImageFont.truetype(font_path, vol_font_size)
+            if font_file:
+                font_title = ImageFont.truetype(font_file, title_font_size)
+                font_vol = ImageFont.truetype(font_file, vol_font_size)
             else:
-                fallback_path = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf"
-                if os.path.exists(fallback_path):
-                    font_title = ImageFont.truetype(fallback_path, title_font_size)
-                    font_vol = ImageFont.truetype(fallback_path, vol_font_size)
-                else:
-                    font_title = ImageFont.load_default()
-                    font_vol = ImageFont.load_default()
+                font_title = ImageFont.load_default()
+                font_vol = ImageFont.load_default()
         except Exception:
             font_title = ImageFont.load_default()
             font_vol = ImageFont.load_default()
@@ -789,12 +799,16 @@ class VolumeControl(ActionBase):
         scale_box.append(self.scale_slider)
         self.scale_row.set_child(scale_box)
 
-        # 8. Custom Font File (*.ttf) entry row showing basename, non-editable
-        self.font_row = Adw.EntryRow(
-            title="Custom Font File (*.ttf)",
-            text=os.path.basename(self.get_font_path())
+        # 8. Custom Font Row (using FontChooserDialog)
+        friendly_font_name = settings.get("font_name")
+        if not friendly_font_name:
+            font_path_val = settings.get("font_path", "Ubuntu-B.ttf")
+            friendly_font_name = os.path.basename(font_path_val).replace(".ttf", "").replace(".otf", "").replace("-", " ")
+        self.font_row = Adw.ActionRow(
+            title="Font",
+            subtitle=friendly_font_name,
+            activatable=True
         )
-        self.font_row.set_editable(False)
         self.choose_font_button = Gtk.Button.new_from_icon_name("document-open-symbolic")
         self.choose_font_button.set_valign(Gtk.Align.CENTER)
         self.font_row.add_suffix(self.choose_font_button)
@@ -829,7 +843,7 @@ class VolumeControl(ActionBase):
         self.choose_icon_button.connect("clicked", self.on_choose_icon_clicked)
         self.clear_icon_button.connect("clicked", self.on_clear_icon_clicked)
         self.scale_slider.connect("value-changed", self.on_scale_changed)
-        self.font_row.connect("notify::text", self.on_font_path_changed)
+        self.font_row.connect("activated", self.on_choose_font_clicked)
         self.choose_font_button.connect("clicked", self.on_choose_font_clicked)
         self.title_size_slider.connect("value-changed", self.on_title_size_changed)
         
@@ -837,16 +851,30 @@ class VolumeControl(ActionBase):
         icon_path = settings.get("custom_icon", "")
         self.clear_icon_button.set_sensitive(bool(icon_path))
         
+        # Create Text (Custom Display Name) Expander Row
+        self.text_expander = Adw.ExpanderRow(
+            title="Custom Display Name",
+            subtitle="Configure display name, font, and size"
+        )
+        self.text_expander.add_row(self.custom_name_row)
+        self.text_expander.add_row(self.font_row)
+        self.text_expander.add_row(self.title_size_row)
+
+        # Create Icon Expander Row
+        self.icon_expander = Adw.ExpanderRow(
+            title="Icon Configuration",
+            subtitle="Configure icon and scaling"
+        )
+        self.icon_expander.add_row(self.icon_row)
+        self.icon_expander.add_row(self.scale_row)
+        
         return [
-            self.custom_name_row,
+            self.text_expander,
             self.type_selector,
             self.pw_device_selector,
             self.step_selector,
             self.fps_selector,
-            self.icon_row,
-            self.scale_row,
-            self.font_row,
-            self.title_size_row
+            self.icon_expander
         ]
 
     def on_custom_name_changed(self, entry, *args):
@@ -948,37 +976,92 @@ class VolumeControl(ActionBase):
         self.set_settings(settings)
         self.update_ui_rendering()
 
-    def on_font_path_changed(self, entry, *args):
-        settings = self.get_settings() or {}
-        settings["font_path"] = entry.get_text()
-        self.set_settings(settings)
-        self.update_ui_rendering()
-
-    def update_font_setting(self, path):
-        self.font_row.set_text(os.path.basename(path))
-        settings = self.get_settings() or {}
-        settings["font_path"] = path
-        self.set_settings(settings)
-        self.update_ui_rendering()
-
-    def on_choose_font_clicked(self, button):
-        dialog = Gtk.FileChooserNative.new(
-            title="Select Font File",
-            parent=None,
-            action=Gtk.FileChooserAction.OPEN,
-            accept_label="Open",
-            cancel_label="Cancel"
-        )
-        filter_ttf = Gtk.FileFilter.new()
-        filter_ttf.set_name("Font files (*.ttf, *.otf)")
-        filter_ttf.add_pattern("*.ttf")
-        filter_ttf.add_pattern("*.otf")
-        dialog.add_filter(filter_ttf)
+    def font_name_to_path(self, font_name: str) -> str:
+        import re
+        import subprocess
+        # font_name is e.g. "DejaVu Sans Bold 15" or "DejaVu Sans 15"
+        # Remove trailing digits (size)
+        match = re.match(r'^(.*?)\s+\d+$', font_name.strip())
+        if match:
+            font_desc = match.group(1)
+        else:
+            font_desc = font_name.strip()
         
+        # Try to find common styles: "Bold", "Italic", "Oblique", "Condensed", "Medium", "Light", "Semibold"
+        styles = []
+        family = font_desc
+        for style in ["Bold", "Italic", "Oblique", "Condensed", "Medium", "Light", "Semibold", "Regular", "Book"]:
+            pattern = re.compile(rf'\b{style}\b', re.IGNORECASE)
+            if pattern.search(family):
+                styles.append(style.lower())
+                family = pattern.sub("", family).strip()
+                
+        family = " ".join(family.split())
+        pattern_str = family
+        if styles:
+            pattern_str += ":" + ":".join(styles)
+            
+        try:
+            path = subprocess.check_output(
+                ["fc-match", "-f", "%{file}", pattern_str],
+                text=True
+            ).strip()
+            if path and os.path.exists(path):
+                return path
+        except Exception:
+            pass
+            
+        try:
+            path = subprocess.check_output(
+                ["fc-match", "-f", "%{file}", font_desc],
+                text=True
+            ).strip()
+            if path and os.path.exists(path):
+                return path
+        except Exception:
+            pass
+            
+        return "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf"
+
+    def on_font_path_changed(self, entry, *args):
+        # Kept for backward compatibility but no longer used
+        pass
+
+    def update_font_setting(self, font_name: str):
+        settings = self.get_settings() or {}
+        settings["font_name"] = font_name
+        
+        # Convert font name to file path using our helper function
+        font_path = self.font_name_to_path(font_name)
+        settings["font_path"] = font_path
+        
+        self.set_settings(settings)
+        self.font_row.set_subtitle(font_name)
+        self.update_ui_rendering()
+
+    def on_choose_font_clicked(self, *args):
+        parent_window = None
+        if args and hasattr(args[0], "get_root"):
+            root = args[0].get_root()
+            if isinstance(root, Gtk.Window):
+                parent_window = root
+                
+        dialog = Gtk.FontChooserDialog(
+            title="Pick a Font",
+            transient_for=parent_window,
+            modal=True
+        )
+        
+        # Set the currently selected font if available
+        settings = self.get_settings() or {}
+        current_font = settings.get("font_name", "")
+        if current_font:
+            dialog.set_font(current_font)
+            
         def on_response(dialog, response_id):
             if response_id == Gtk.ResponseType.ACCEPT:
-                file_path = dialog.get_file().get_path()
-                GLib.idle_add(self.update_font_setting, file_path)
+                font_name = dialog.get_font()
+                GLib.idle_add(self.update_font_setting, font_name)
             dialog.destroy()
             
         dialog.connect("response", on_response)
