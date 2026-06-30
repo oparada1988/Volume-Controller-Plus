@@ -564,10 +564,9 @@ class VolumeControl(ActionBase):
         bbox = [(cx - rx_arc, cy - ry_arc), (cx + rx_arc, cy + ry_arc)]
         draw.arc(bbox, start=180, end=360, fill=(38, 38, 42, 255), width=7)
         
-        # Draw Active Gauge Segment
-        end_angle = 180 + 180 * (volume / 100.0)
-        
-        if not is_muted and volume > 0:
+        # Draw Active Gauge Segment (now functions as the live audio playback meter)
+        if not is_muted and peak > 0.04:
+            end_angle = 180 + 180 * peak
             for angle in range(180, int(end_angle)):
                 pct = (angle - 180) / 180.0
                 if pct < 0.5:
@@ -582,21 +581,14 @@ class VolumeControl(ActionBase):
                     b_col = 0
                     
                 draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=7)
-                
-        # Draw Real-time Audio Peak Meter (glowing cyan arc hugging outer knob)
-        if not is_muted and peak > 0.04:
-            rx_peak, ry_peak = 44, 42
-            bbox_peak = [(cx - rx_peak, cy - ry_peak), (cx + rx_peak, cy + ry_peak)]
-            peak_angle = 180 + 180 * peak
-            draw.arc(bbox_peak, start=180, end=int(peak_angle), fill=(0, 210, 255, 255), width=3)
 
         # 4. Draw Inner Knob Core (Outer shadow/border for 3D bevel look)
         draw.ellipse([(cx - rx_outer, cy - ry_outer), (cx + rx_outer, cy + ry_outer)], fill=(18, 18, 20, 255))
         # Inner circle of the core
         draw.ellipse([(cx - rx_inner, cy - ry_inner), (cx + rx_inner, cy + ry_inner)], fill=(28, 28, 32, 255), outline=(60, 62, 72, 255), width=1)
         
-        # 5. Draw Pointer line on top of the knob
-        pointer_angle = end_angle
+        # 5. Draw Pointer line on top of the knob (still represents static volume level)
+        pointer_angle = 180 + 180 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
         xp1 = cx + r_pt_start * math.cos(rad_pt)
         yp1 = cy + r_pt_start * math.sin(rad_pt)
