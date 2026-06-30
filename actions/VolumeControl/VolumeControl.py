@@ -587,7 +587,8 @@ class VolumeControl(ActionBase):
         
         # Draw Active Gauge Segment (now functions as the live audio playback meter)
         if not is_muted and peak > 0.04:
-            end_angle = 180 + 180 * peak
+            scaled_peak = peak * (volume / 100.0)
+            end_angle = 180 + 180 * scaled_peak
             for angle in range(180, int(end_angle)):
                 pct = (angle - 180) / 180.0
                 if pct < 0.5:
