@@ -227,6 +227,8 @@ class VolumeControl(ActionBase):
             
         peak = self.peak_monitor.get_peak()
         peak = max(0.0, min(1.0, peak))
+        if peak < 0.04:
+            peak = 0.0
         
         peak_diff = abs(peak - self.last_drawn_peak)
         if (self.current_volume != self.last_drawn_volume or 
@@ -295,6 +297,7 @@ class VolumeControl(ActionBase):
         try:
             output = self.run_cmd(["wpctl", "status"])
             current_section = None
+            import re
             for line in output.splitlines():
                 line_strip = line.strip()
                 if not line_strip:
@@ -309,19 +312,14 @@ class VolumeControl(ActionBase):
                     if current_section in ["sinks", "sources"]:
                         current_section = None
                         
-                if current_section == "sinks":
-                    parts = line_strip.split(".")
-                    if len(parts) >= 2:
-                        id_part = parts[0].replace("*", "").strip()
-                        name_part = parts[1].split("[")[0].strip()
-                        if id_part.isdigit():
+                if current_section in ["sinks", "sources"]:
+                    match = re.search(r'(\d+)\.\s*([^\[]+)', line_strip)
+                    if match:
+                        id_part = match.group(1)
+                        name_part = match.group(2).strip()
+                        if current_section == "sinks":
                             sinks.append((id_part, name_part))
-                elif current_section == "sources":
-                    parts = line_strip.split(".")
-                    if len(parts) >= 2:
-                        id_part = parts[0].replace("*", "").strip()
-                        name_part = parts[1].split("[")[0].strip()
-                        if id_part.isdigit():
+                        else:
                             sources.append((id_part, name_part))
         except Exception:
             pass
@@ -329,31 +327,33 @@ class VolumeControl(ActionBase):
 
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
         try:
-            output = self.run_cmd(["wpctl", "get-volume", device_id]).strip()
+            output = self.run_cmd(["wpctl", "get-volume", device_id])
+            if not output:
+                return self.current_volume, self.last_mute
+            output = output.strip()
             parts = output.split()
-            volume = 0
-            mute = False
+            volume = self.current_volume
+            mute = self.last_mute
             if len(parts) >= 2:
                 vol_str = parts[1]
                 try:
                     volume = int(float(vol_str) * 100)
                 except ValueError:
-                    volume = 0
+                    pass
             if "[MUTED]" in output:
                 mute = True
+            else:
+                mute = False
             return volume, mute
         except Exception:
-            return 50, False
+            return self.current_volume, self.last_mute
 
     def get_system_volume_status(self) -> "tuple[int, bool]":
         device_id = self.get_configured_device_id()
         return self.get_pipewire_status(device_id)
 
-    def change_pipewire_volume(self, device_id: str, delta: int) -> None:
-        # Get current volume first to prevent overflow/underflow on set
-        vol, muted = self.get_pipewire_status(device_id)
-        new_vol = max(0, min(100, vol + delta))
-        val = f"{new_vol / 100.0:.2f}"
+    def change_pipewire_volume(self, device_id: str, target_vol: int) -> None:
+        val = f"{target_vol / 100.0:.2f}"
         try:
             self.execute_cmd(["wpctl", "set-volume", "-l", "1.0", device_id, val])
         except Exception:
@@ -362,11 +362,11 @@ class VolumeControl(ActionBase):
     def change_volume(self, delta: int) -> None:
         self.current_volume = max(0, min(100, self.current_volume + delta))
         self.update_ui_rendering()
-        threading.Thread(target=self._change_volume_bg, args=(delta,), daemon=True).start()
+        threading.Thread(target=self._change_volume_bg, args=(self.current_volume,), daemon=True).start()
 
-    def _change_volume_bg(self, delta: int):
+    def _change_volume_bg(self, target_vol: int):
         device_id = self.get_configured_device_id()
-        self.change_pipewire_volume(device_id, delta)
+        self.change_pipewire_volume(device_id, target_vol)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
         try:
@@ -584,7 +584,7 @@ class VolumeControl(ActionBase):
                 draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=7)
                 
         # Draw Real-time Audio Peak Meter (glowing cyan arc hugging outer knob)
-        if not is_muted and peak > 0.0:
+        if not is_muted and peak > 0.04:
             rx_peak, ry_peak = 44, 42
             bbox_peak = [(cx - rx_peak, cy - ry_peak), (cx + rx_peak, cy + ry_peak)]
             peak_angle = 180 + 180 * peak
