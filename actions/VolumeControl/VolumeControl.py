@@ -453,33 +453,40 @@ class VolumeControl(ActionBase):
 
         # Fonts
         font_path = settings.get("font_path", "")
-        
-        # Extract title font size from settings["font_name"] if set by the font selection tool
         font_name = settings.get("font_name", "")
         title_font_size = 14
+        font_file = None
+        
         if font_name:
             import re
             match = re.search(r'\s+(\d+)$', font_name.strip())
             if match:
                 title_font_size = int(match.group(1))
-        else:
-            title_font_size = int(settings.get("title_font_size", 14))
             
-        vol_font_size = 28
-        
-        font_file = None
-        if font_path and os.path.exists(font_path):
+            # Resolve dynamically on the fly in the backend's environment
+            resolved_path = self.font_name_to_path(font_name)
+            if resolved_path and os.path.exists(resolved_path):
+                font_file = resolved_path
+                
+        # If not resolved from font_name, check saved font_path
+        if not font_file and font_path and os.path.exists(font_path):
             font_file = font_path
-        else:
+            
+        # Fallback to standard system paths if still not found
+        if not font_file:
             for path in [
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
                 "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf"
             ]:
                 if os.path.exists(path):
                     font_file = path
                     break
+                    
+        vol_font_size = 28
                     
         try:
             if font_file:
@@ -1014,10 +1021,10 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         settings["font_name"] = font_name
         
-        # Convert font name to file path using our helper function
-        font_path = self.font_name_to_path(font_name)
-        settings["font_path"] = font_path
-        
+        # We clear font_path so that the backend resolves it dynamically in its own environment
+        if "font_path" in settings:
+            del settings["font_path"]
+            
         self.set_settings(settings)
         self.font_row.set_subtitle(font_name)
         self.update_ui_rendering()
