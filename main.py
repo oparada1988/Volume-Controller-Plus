@@ -21,7 +21,7 @@ class PluginTemplate(PluginBase):
         self.volume_control_holder = ActionHolder(
             plugin_base = self,
             action_base = VolumeControl,
-            action_id = "Volume COntrol for Stream Deck Plus::VolumeControl",
+            action_id = "Volume Control for Stream Deck Plus::VolumeControl",
             action_name = "Volume Controller Plus",
             action_support = {
                 Input.Key: ActionInputSupport.UNSUPPORTED,
@@ -40,5 +40,5 @@ class PluginTemplate(PluginBase):
         )
 
     def get_selector_icon(self) -> Gtk.Widget:
-        icon_path = os.path.join(self.PATH, "assets", "tune.svg")
+        icon_path = os.path.join(self.PATH, "assets", "tune.png")
         return Gtk.Image(file=icon_path)
