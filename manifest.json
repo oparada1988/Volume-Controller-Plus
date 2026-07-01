@@ -1,8 +1,8 @@
 {
     "version": "1.0.0",
     "thumbnail": "assets/tune.png",
-    "id": "Volume Control for Stream Deck Plus",
-    "name": "Volume Controller Plus",
+    "id": "com_oparada_VolumeControllerPlus",
+    "name": "Volume Control for Stream Deck Plus",
     "descriptions": {
         "en_US": "Official-style Volume Controller for Stream Deck Plus, allowing volume adjustment via dials and mute toggle via push/touch."
     },
