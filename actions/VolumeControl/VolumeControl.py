@@ -694,19 +694,16 @@ class VolumeControl(ActionBase):
                 title_w = len(title_text) * 8
             draw.text((center_x - title_w // 2, 16 - 8), title_text, font=font_title, fill=(220, 222, 230, 255))
         
-        # 3. Dial Geometry (Smaller knob core: Width = 80px, Height = 38px)
-        cx, cy = 100, 100
+        # 3. Dial Geometry (Wider and shorter knob core, shifted up by 12px)
+        cx, cy = 100, 88
         
-        # Outer Knob Core dimensions (80px wide, 38px high)
-        rx_outer, ry_outer = 40, 38
+        # Outer Knob Core dimensions (widen to 46, shorten to 28)
+        rx_outer, ry_outer = 46, 28
         # Inner Knob Core dimensions (Thickness = 3px)
-        rx_inner, ry_inner = 37, 35
+        rx_inner, ry_inner = 43, 25
         
         # Gauge Arc dimensions (9px outside the knob core)
-        rx_arc, ry_arc = 49, 47
-        
-        # Pointer dimensions
-        r_pt_start, r_pt_end = 14, 32
+        rx_arc, ry_arc = 55, 37
         
         # Draw Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
         for i in range(17):
@@ -714,14 +711,14 @@ class VolumeControl(ActionBase):
             rad = math.radians(tick_angle)
             if i % 4 == 0:
                 # Quarters: longer, thicker lines
-                rx_tick_start, ry_tick_start = 53, 51
-                rx_tick_end, ry_tick_end = 65, 63
+                rx_tick_start, ry_tick_start = 59, 41
+                rx_tick_end, ry_tick_end = 70, 52
                 w = 3
                 color = (160, 162, 175, 255)
             else:
                 # Smaller lines in between
-                rx_tick_start, ry_tick_start = 58, 56
-                rx_tick_end, ry_tick_end = 63, 61
+                rx_tick_start, ry_tick_start = 64, 46
+                rx_tick_end, ry_tick_end = 69, 51
                 w = 1
                 color = (110, 112, 120, 255)
                 
@@ -771,10 +768,11 @@ class VolumeControl(ActionBase):
         # 5. Draw Pointer line on top of the knob (still represents static volume level)
         pointer_angle = 180 + 180 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
-        xp1 = cx + r_pt_start * math.cos(rad_pt)
-        yp1 = cy + r_pt_start * math.sin(rad_pt)
-        xp2 = cx + r_pt_end * math.cos(rad_pt)
-        yp2 = cy + r_pt_end * math.sin(rad_pt)
+        # Use elliptical scaling for pointer tip to match the knob shape nicely
+        xp1 = cx + 12 * math.cos(rad_pt)
+        yp1 = cy + 12 * math.sin(rad_pt)
+        xp2 = cx + 38 * math.cos(rad_pt)
+        yp2 = cy + 22 * math.sin(rad_pt)
         pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3)
         
