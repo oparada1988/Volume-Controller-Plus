@@ -735,13 +735,9 @@ class VolumeControl(ActionBase):
                 text_w = len(title_text) * (current_size * 0.6)
         
         try:
-            draw.text((center_x, 16), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="mm")
+            draw.text((left_bound, 16), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="lm")
         except TypeError:
-            try:
-                title_w = font_title.getlength(title_text)
-            except Exception:
-                title_w = len(title_text) * 8
-            draw.text((center_x - title_w // 2, 16 - 8), title_text, font=font_title, fill=(220, 222, 230, 255))
+            draw.text((left_bound, 16 - 8), title_text, font=font_title, fill=(220, 222, 230, 255))
         
         # 3. Dial Geometry (Perfect half-circle layout shifted up to fit within display edges)
         cx, cy = 100, 92
