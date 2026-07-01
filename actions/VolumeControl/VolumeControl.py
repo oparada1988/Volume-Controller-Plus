@@ -485,19 +485,40 @@ class VolumeControl(ActionBase):
                 if os.path.exists(path):
                     font_file = path
                     break
-        vol_font_size = 28
-                    
+        # Determine bold font file for volume percentage
+        vol_font_file = None
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
+        ]:
+            if os.path.exists(path):
+                vol_font_file = path
+                break
+
+        # Load title font
         try:
             if font_file:
                 font_title = ImageFont.truetype(font_file, title_font_size)
-                font_vol = ImageFont.truetype(font_file, vol_font_size)
             else:
                 font_title = ImageFont.load_default()
-                font_vol = ImageFont.load_default()
         except Exception as e:
             import traceback
             traceback.print_exc()
             font_title = ImageFont.load_default()
+
+        # Load volume font (bold, size 19, static)
+        vol_font_size = 19
+        try:
+            if vol_font_file:
+                font_vol = ImageFont.truetype(vol_font_file, vol_font_size)
+            else:
+                font_vol = ImageFont.load_default()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             font_vol = ImageFont.load_default()
 
         # Calculate volume text width to determine boundaries
@@ -507,13 +528,13 @@ class VolumeControl(ActionBase):
         try:
             vol_w = font_vol.getlength(vol_text)
         except Exception:
-            vol_w = 56
+            vol_w = 40
             
         # Draw Volume Text (right-aligned, vertically centered at y=16)
         try:
             draw.text((188, 16), vol_text, font=font_vol, fill=vol_color, anchor="rm")
         except TypeError:
-            draw.text((188 - vol_w, 16 - 14), vol_text, font=font_vol, fill=vol_color)
+            draw.text((188 - vol_w, 16 - 10), vol_text, font=font_vol, fill=vol_color)
         
         # Icon placement area (vertical center shifted to y=16, base size increased to 24)
         icon_drawn = False
