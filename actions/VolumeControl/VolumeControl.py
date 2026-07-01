@@ -159,6 +159,14 @@ class VolumeControl(ActionBase):
         self.last_drawn_peak = -1.0
         self._gauge_gradient_img = None
         self._render_lock = threading.RLock()
+        
+        # Cached resources for performance
+        self._cached_font_title = None
+        self._cached_font_vol = None
+        self._cached_font_name = None
+        self._cached_font_path = None
+        self._cached_icon_path = None
+        self._cached_icon_img = None
 
     def on_ready(self) -> None:
         self.running = True
@@ -479,75 +487,77 @@ class VolumeControl(ActionBase):
         custom_icon_path = settings.get("custom_icon", "")
         icon_scale = 2.0
 
-        # Fonts
+        # Resolve and cache fonts if they have changed or are not cached
         font_path = settings.get("font_path", "")
         font_name = settings.get("font_name", "")
-        title_font_size = 14
-        font_file = None
         
-        if font_name:
-            import re
-            match = re.search(r'\s+(\d+)$', font_name.strip())
-            if match:
-                title_font_size = int(match.group(1))
+        if (self._cached_font_title is None or 
+            self._cached_font_vol is None or 
+            font_name != self._cached_font_name or 
+            font_path != self._cached_font_path):
             
-            # Resolve dynamically on the fly in the backend's environment
-            resolved_path = self.font_name_to_path(font_name)
-            if resolved_path and os.path.exists(resolved_path):
-                font_file = resolved_path
+            title_font_size = 14
+            font_file = None
+            
+            if font_name:
+                import re
+                match = re.search(r'\s+(\d+)$', font_name.strip())
+                if match:
+                    title_font_size = int(match.group(1))
                 
-        # If not resolved from font_name, check saved font_path
-        if not font_file and font_path and os.path.exists(font_path):
-            font_file = font_path
-            
-        # Fallback to standard system paths if still not found
-        if not font_file:
+                resolved_path = self.font_name_to_path(font_name)
+                if resolved_path and os.path.exists(resolved_path):
+                    font_file = resolved_path
+                    
+            if not font_file and font_path and os.path.exists(font_path):
+                font_file = font_path
+                
+            if not font_file:
+                for path in [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                    "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
+                    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+                ]:
+                    if os.path.exists(path):
+                        font_file = path
+                        break
+                        
+            vol_font_file = None
             for path in [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                 "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
                 "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
             ]:
                 if os.path.exists(path):
-                    font_file = path
+                    vol_font_file = path
                     break
-        # Determine bold font file for volume percentage
-        vol_font_file = None
-        for path in [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
-        ]:
-            if os.path.exists(path):
-                vol_font_file = path
-                break
-
-        # Load title font
-        try:
-            if font_file:
-                font_title = ImageFont.truetype(font_file, title_font_size)
-            else:
-                font_title = ImageFont.load_default()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            font_title = ImageFont.load_default()
-
-        # Load volume font (bold, size 19, static)
-        vol_font_size = 19
-        try:
-            if vol_font_file:
-                font_vol = ImageFont.truetype(vol_font_file, vol_font_size)
-            else:
-                font_vol = ImageFont.load_default()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            font_vol = ImageFont.load_default()
+                    
+            try:
+                if font_file:
+                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size)
+                else:
+                    self._cached_font_title = ImageFont.load_default()
+            except Exception:
+                self._cached_font_title = ImageFont.load_default()
+                
+            try:
+                if vol_font_file:
+                    self._cached_font_vol = ImageFont.truetype(vol_font_file, 19)
+                else:
+                    self._cached_font_vol = ImageFont.load_default()
+            except Exception:
+                self._cached_font_vol = ImageFont.load_default()
+                
+            self._cached_font_name = font_name
+            self._cached_font_path = font_path
+            
+        font_title = self._cached_font_title
+        font_vol = self._cached_font_vol
 
         # Calculate volume text width to determine boundaries
         vol_text = "MUTE" if is_muted else f"{volume}%"
@@ -568,13 +578,21 @@ class VolumeControl(ActionBase):
         icon_drawn = False
         icon_w = 16  # Base width of the icon area
         if custom_icon_path:
-            icon_img = self.load_icon_image(custom_icon_path)
-            if icon_img is not None:
-                icon_img = icon_img.convert("RGBA")
-                base_size = 14  # Base size scaled to fit layout nicely
-                scaled_size = int(base_size * icon_scale)
-                scaled_size = max(4, min(scaled_size, 28))  # Clamp to max 28 to prevent out of bounds clipping
-                icon_img = icon_img.resize((scaled_size, scaled_size))
+            # Resolve and cache custom icon if path has changed
+            if custom_icon_path != self._cached_icon_path or self._cached_icon_img is None:
+                loaded_img = self.load_icon_image(custom_icon_path)
+                if loaded_img is not None:
+                    loaded_img = loaded_img.convert("RGBA")
+                    base_size = 14
+                    scaled_size = max(4, min(int(base_size * icon_scale), 28))
+                    self._cached_icon_img = loaded_img.resize((scaled_size, scaled_size))
+                else:
+                    self._cached_icon_img = None
+                self._cached_icon_path = custom_icon_path
+                
+            if self._cached_icon_img is not None:
+                icon_img = self._cached_icon_img.copy()
+                scaled_size = icon_img.width
                 
                 # Keep within bounds: y between 6 and 38, x at 12
                 x_start = 12
