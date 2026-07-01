@@ -743,12 +743,11 @@ class VolumeControl(ActionBase):
             if is_live_enabled:
                 grad_img = self._get_gauge_gradient_image(width, height, bbox)
                 
-                # 1. Dimmed volume level gradient arc (representing volume)
-                if vol_angle > 180:
-                    vol_mask = Image.new("L", (width, height), 0)
-                    vol_mask_draw = ImageDraw.Draw(vol_mask)
-                    vol_mask_draw.arc(bbox, start=180, end=vol_angle, fill=75, width=7)
-                    img.paste(grad_img, (0, 0), vol_mask)
+                # 1. Dimmed volume level gradient arc (remains 100% visible)
+                vol_mask = Image.new("L", (width, height), 0)
+                vol_mask_draw = ImageDraw.Draw(vol_mask)
+                vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7)
+                img.paste(grad_img, (0, 0), vol_mask)
                 
                 # 2. Fully bright audio peak gradient arc bouncing within/up to current volume
                 if peak > 0.04:
