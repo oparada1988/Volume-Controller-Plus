@@ -629,11 +629,11 @@ class VolumeControl(ActionBase):
         except Exception:
             vol_w = 40
             
-        # Draw Volume Text (right-aligned, vertically centered at y=30)
+        # Draw Volume Text (right-aligned, vertically centered at y=32)
         try:
-            draw.text((188, 30), vol_text, font=font_vol, fill=vol_color, anchor="rm")
+            draw.text((188, 32), vol_text, font=font_vol, fill=vol_color, anchor="rm")
         except TypeError:
-            draw.text((188 - vol_w, 30 - 10), vol_text, font=font_vol, fill=vol_color)
+            draw.text((188 - vol_w, 32 - 10), vol_text, font=font_vol, fill=vol_color)
         
         # Icon placement area (vertical center shifted to y=16, base size increased to 24)
         icon_drawn = False
@@ -700,13 +700,7 @@ class VolumeControl(ActionBase):
             title_text = settings.get("pipewire_device_name", "Default Sink")
             
         left_bound = 12 + icon_w + 6
-        # Calculate maximum possible volume text width statically to avoid shifting the title text
-        try:
-            max_vol_w = max(font_vol.getlength("100%"), font_vol.getlength("MUTE"))
-        except Exception:
-            max_vol_w = 48  # Safe default fallback for maximum width
-
-        right_bound = 188 - max_vol_w - 6
+        right_bound = 188
         center_x = left_bound + (right_bound - left_bound) // 2
         max_width = right_bound - left_bound - 4
 
