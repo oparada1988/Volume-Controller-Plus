@@ -694,16 +694,16 @@ class VolumeControl(ActionBase):
                 title_w = len(title_text) * 8
             draw.text((center_x - title_w // 2, 16 - 8), title_text, font=font_title, fill=(220, 222, 230, 255))
         
-        # 3. Dial Geometry (Wider and shorter knob core, shifted up by 12px)
-        cx, cy = 100, 88
+        # 3. Dial Geometry (Perfect half-circle layout centered at the bottom edge)
+        cx, cy = 100, 100
         
-        # Outer Knob Core dimensions (widen to 46, shorten to 28)
-        rx_outer, ry_outer = 46, 28
-        # Inner Knob Core dimensions (Thickness = 3px)
-        rx_inner, ry_inner = 43, 25
+        # Outer Knob Core radius
+        r_outer = 48
+        # Inner Knob Core radius (Thickness = 3px)
+        r_inner = 45
         
-        # Gauge Arc dimensions (9px outside the knob core)
-        rx_arc, ry_arc = 55, 37
+        # Gauge Arc radius
+        r_arc = 56
         
         # Draw Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
         for i in range(17):
@@ -711,25 +711,25 @@ class VolumeControl(ActionBase):
             rad = math.radians(tick_angle)
             if i % 4 == 0:
                 # Quarters: longer, thicker lines
-                rx_tick_start, ry_tick_start = 59, 41
-                rx_tick_end, ry_tick_end = 70, 52
+                r_tick_start = 60
+                r_tick_end = 70
                 w = 3
                 color = (160, 162, 175, 255)
             else:
                 # Smaller lines in between
-                rx_tick_start, ry_tick_start = 64, 46
-                rx_tick_end, ry_tick_end = 69, 51
+                r_tick_start = 64
+                r_tick_end = 69
                 w = 1
                 color = (110, 112, 120, 255)
                 
-            x1 = cx + rx_tick_start * math.cos(rad)
-            y1 = cy + ry_tick_start * math.sin(rad)
-            x2 = cx + rx_tick_end * math.cos(rad)
-            y2 = cy + ry_tick_end * math.sin(rad)
+            x1 = cx + r_tick_start * math.cos(rad)
+            y1 = cy + r_tick_start * math.sin(rad)
+            x2 = cx + r_tick_end * math.cos(rad)
+            y2 = cy + r_tick_end * math.sin(rad)
             draw.line([(x1, y1), (x2, y2)], fill=color, width=w)
             
         # Draw Gauge Track (inactive - dark background arc)
-        bbox = [(cx - rx_arc, cy - ry_arc), (cx + rx_arc, cy + ry_arc)]
+        bbox = [(cx - r_arc, cy - r_arc), (cx + r_arc, cy + r_arc)]
         draw.arc(bbox, start=180, end=360, fill=(38, 38, 42, 255), width=7)
         
         # Draw Active Gauge Segments: static volume (dimmed) + live audio peak (fully bright) OR blue volume meter
@@ -761,18 +761,17 @@ class VolumeControl(ActionBase):
                     draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7)
 
         # 4. Draw Inner Knob Core (Outer shadow/border for 3D bevel look)
-        draw.ellipse([(cx - rx_outer, cy - ry_outer), (cx + rx_outer, cy + ry_outer)], fill=(18, 18, 20, 255))
+        draw.ellipse([(cx - r_outer, cy - r_outer), (cx + r_outer, cy + r_outer)], fill=(18, 18, 20, 255))
         # Inner circle of the core
-        draw.ellipse([(cx - rx_inner, cy - ry_inner), (cx + rx_inner, cy + ry_inner)], fill=(28, 28, 32, 255), outline=(60, 62, 72, 255), width=1)
+        draw.ellipse([(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)], fill=(28, 28, 32, 255), outline=(60, 62, 72, 255), width=1)
         
         # 5. Draw Pointer line on top of the knob (still represents static volume level)
         pointer_angle = 180 + 180 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
-        # Use elliptical scaling for pointer tip to match the knob shape nicely
         xp1 = cx + 12 * math.cos(rad_pt)
         yp1 = cy + 12 * math.sin(rad_pt)
-        xp2 = cx + 38 * math.cos(rad_pt)
-        yp2 = cy + 22 * math.sin(rad_pt)
+        xp2 = cx + 40 * math.cos(rad_pt)
+        yp2 = cy + 40 * math.sin(rad_pt)
         pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3)
         
