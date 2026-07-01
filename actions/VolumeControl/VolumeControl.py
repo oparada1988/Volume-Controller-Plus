@@ -487,6 +487,10 @@ class VolumeControl(ActionBase):
         # 2. Header
         settings = self.get_settings() or {}
         custom_icon_path = settings.get("custom_icon", "")
+        if not custom_icon_path:
+            dtype = settings.get("device_type", "sink")
+            icon_filename = "input.png" if dtype == "source" else "output.png"
+            custom_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
         icon_scale = 2.0
 
         # Resolve and cache fonts if they have changed or are not cached
@@ -698,9 +702,9 @@ class VolumeControl(ActionBase):
         cx, cy = 100, 92
         
         # Outer Knob Core radius
-        r_outer = 40
+        r_outer = 45
         # Inner Knob Core radius (Thickness = 3px)
-        r_inner = 37
+        r_inner = 42
         
         # Gauge Arc radius
         r_arc = 48
@@ -773,8 +777,8 @@ class VolumeControl(ActionBase):
         rad_pt = math.radians(pointer_angle)
         xp1 = cx + 12 * math.cos(rad_pt)
         yp1 = cy + 12 * math.sin(rad_pt)
-        xp2 = cx + 32 * math.cos(rad_pt)
-        yp2 = cy + 32 * math.sin(rad_pt)
+        xp2 = cx + 36 * math.cos(rad_pt)
+        yp2 = cy + 36 * math.sin(rad_pt)
         pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3)
         
