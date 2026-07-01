@@ -4,6 +4,12 @@ from src.backend.PluginManager.ActionHolder import ActionHolder
 from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
 from src.backend.DeckManagement.InputIdentifier import Input
 
+# Import python & gtk modules
+import os
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+
 # Import actions
 from .actions.VolumeControl.VolumeControl import VolumeControl
 
@@ -15,7 +21,7 @@ class PluginTemplate(PluginBase):
         self.volume_control_holder = ActionHolder(
             plugin_base = self,
             action_base = VolumeControl,
-            action_id = "com_oparada_VolumeControllerPlus::VolumeControl",
+            action_id = "Volume COntrol for Stream Deck Plus::VolumeControl",
             action_name = "Volume Controller Plus",
             action_support = {
                 Input.Key: ActionInputSupport.UNSUPPORTED,
@@ -32,3 +38,7 @@ class PluginTemplate(PluginBase):
             plugin_version = "1.0.0",
             app_version = "1.0.0-alpha"
         )
+
+    def get_selector_icon(self) -> Gtk.Widget:
+        icon_path = os.path.join(self.PATH, "assets", "tune.svg")
+        return Gtk.Image(file=icon_path)
