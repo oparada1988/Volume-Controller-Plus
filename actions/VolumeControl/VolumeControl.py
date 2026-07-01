@@ -172,6 +172,7 @@ class VolumeControl(ActionBase):
         self._cached_base_bg = None
         self._cached_vol_mask = None
         self._current_peak = 0.0
+        self._is_polling = False
 
     def on_ready(self) -> None:
         self.running = True
@@ -306,18 +307,23 @@ class VolumeControl(ActionBase):
         now = time.time()
         if now - self.last_poll_time >= 0.5:
             self.last_poll_time = now
-            threading.Thread(target=self._poll_system_volume_bg, daemon=True).start()
+            if not self._is_polling:
+                self._is_polling = True
+                threading.Thread(target=self._poll_system_volume_bg, daemon=True).start()
             
         return True
 
     def _poll_system_volume_bg(self):
-        if not self.running:
-            return
-        vol, mute = self.get_system_volume_status()
-        if vol != self.current_volume or mute != self.last_mute:
-            self.current_volume = vol
-            self.last_mute = mute
-            GLib.idle_add(self.update_ui_rendering)
+        try:
+            if not self.running:
+                return
+            vol, mute = self.get_system_volume_status()
+            if vol != self.current_volume or mute != self.last_mute:
+                self.current_volume = vol
+                self.last_mute = mute
+                GLib.idle_add(self.update_ui_rendering)
+        finally:
+            self._is_polling = False
 
     def update_ui_rendering(self, peak: float = 0.0, force: bool = False):
         if not force and not self.get_is_present():
