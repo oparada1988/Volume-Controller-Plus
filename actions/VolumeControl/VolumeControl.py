@@ -813,7 +813,7 @@ class VolumeControl(ActionBase):
 
         # 1. Custom Name Row
         self.custom_name_row = Adw.EntryRow(
-            title="Custom Display Name",
+            title="Device Name",
             text=settings.get("custom_name", "")
         )
 
@@ -910,10 +910,9 @@ class VolumeControl(ActionBase):
         icon_path = settings.get("custom_icon", "")
         self.clear_icon_button.set_sensitive(bool(icon_path))
         
-        # Create Text (Custom Display Name) Expander Row
+        # Create Text (Device Name) Expander Row
         self.text_expander = Adw.ExpanderRow(
-            title="Custom Display Name",
-            subtitle="Configure display name and font"
+            title="Device Name"
         )
         self.text_expander.add_row(self.custom_name_row)
         self.text_expander.add_row(self.font_row)
