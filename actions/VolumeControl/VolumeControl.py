@@ -912,9 +912,9 @@ class VolumeControl(ActionBase):
                     scaled_peak = peak * (volume / 100.0)
                     peak_angle = int(180 + 180 * scaled_peak)
                     if peak_angle > 180:
-                        if peak >= 0.99:
+                        if peak >= 0.99 or scaled_peak >= 0.99:
                             # Make the active meter solid red when it reaches 100% peak
-                            draw.arc(bbox, start=180, end=peak_angle, fill=(255, 30, 30, 255), width=7 * RENDER_SCALE)
+                            draw.arc(bbox, start=180, end=min(360, peak_angle), fill=(255, 30, 30, 255), width=7 * RENDER_SCALE)
                         else:
                             # Reuse the pre-allocated peak mask to avoid heavy object instantiation
                             self._peak_mask_draw.rectangle([(0, 0), (width, height)], fill=0)
