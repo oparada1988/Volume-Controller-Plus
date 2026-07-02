@@ -853,10 +853,6 @@ class VolumeControl(ActionBase):
                     
                     mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
                     
-                    if is_muted:
-                        mid_draw.line([((x_start - 2) * RENDER_SCALE, (y_start - 2) * RENDER_SCALE), 
-                                   ((x_start + scaled_size_unscaled + 2) * RENDER_SCALE, (y_start + scaled_size_unscaled + 2) * RENDER_SCALE)], 
-                                  fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
                     icon_drawn = True
                     icon_w = scaled_size_unscaled
 
