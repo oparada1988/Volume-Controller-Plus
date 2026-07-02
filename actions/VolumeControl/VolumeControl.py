@@ -21,6 +21,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib
 import globals as gl
 
+RENDER_SCALE = 2
+
 class VolumePeakMonitor:
     def __init__(self):
         self.device_id = "@DEFAULT_AUDIO_SINK@"
@@ -175,7 +177,7 @@ class VolumeControl(ActionBase):
         self._is_polling = False
 
         # Reusable draw masks & title layout cache for peak performance
-        self._peak_mask = Image.new("L", (200, 100), 0)
+        self._peak_mask = Image.new("L", (200 * RENDER_SCALE, 100 * RENDER_SCALE), 0)
         self._peak_mask_draw = ImageDraw.Draw(self._peak_mask)
         self._last_title_text = None
         self._last_font_file = None
@@ -504,13 +506,13 @@ class VolumeControl(ActionBase):
                     g_col = int(220 - 160 * t)
                     b_col = 0
                     
-                grad_draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=7)
+                grad_draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=7 * RENDER_SCALE)
                 
             self._gauge_gradient_img = grad_img
             return self._gauge_gradient_img
 
     def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
-        width, height = 200, 100
+        width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE
         
         # 1. Load/Generate Base Background with Ticks & Gauge Track (cached to avoid drawing lines/arcs every frame)
         if self._cached_base_bg is None:
@@ -522,18 +524,18 @@ class VolumeControl(ActionBase):
                     pass
                     
             if self.bg_image is not None:
-                bg = self.bg_image.copy()
+                bg = self.bg_image.resize((width, height), Image.Resampling.LANCZOS)
             else:
                 bg = Image.new("RGBA", (width, height), (28, 28, 28, 255))
                 
             bg_draw = ImageDraw.Draw(bg)
             
             # Pre-render Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
-            cx_bg, cy_bg = 100, 92
-            r_tick_major_start = 51
-            r_tick_major_end = 60
-            r_tick_minor_start = 55
-            r_tick_minor_end = 59
+            cx_bg, cy_bg = 100 * RENDER_SCALE, 92 * RENDER_SCALE
+            r_tick_major_start = 51 * RENDER_SCALE
+            r_tick_major_end = 60 * RENDER_SCALE
+            r_tick_minor_start = 55 * RENDER_SCALE
+            r_tick_minor_end = 59 * RENDER_SCALE
             
             for i in range(17):
                 tick_angle = 180 + i * 11.25
@@ -541,12 +543,12 @@ class VolumeControl(ActionBase):
                 if i % 4 == 0:
                     r_tick_start = r_tick_major_start
                     r_tick_end = r_tick_major_end
-                    w = 3
+                    w = 3 * RENDER_SCALE
                     color = (160, 162, 175, 255)
                 else:
                     r_tick_start = r_tick_minor_start
                     r_tick_end = r_tick_minor_end
-                    w = 1
+                    w = 1 * RENDER_SCALE
                     color = (110, 112, 120, 255)
                     
                 x1 = cx_bg + r_tick_start * math.cos(rad)
@@ -556,9 +558,9 @@ class VolumeControl(ActionBase):
                 bg_draw.line([(x1, y1), (x2, y2)], fill=color, width=w)
                 
             # Pre-render Gauge Track (inactive - dark background arc)
-            r_arc_bg = 48
+            r_arc_bg = 48 * RENDER_SCALE
             bbox_bg = [(cx_bg - r_arc_bg, cy_bg - r_arc_bg), (cx_bg + r_arc_bg, cy_bg + r_arc_bg)]
-            bg_draw.arc(bbox_bg, start=180, end=360, fill=(38, 38, 42, 255), width=7)
+            bg_draw.arc(bbox_bg, start=180, end=360, fill=(38, 38, 42, 255), width=7 * RENDER_SCALE)
             
             self._cached_base_bg = bg
             
@@ -626,7 +628,7 @@ class VolumeControl(ActionBase):
                     
             try:
                 if font_file:
-                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size)
+                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size * RENDER_SCALE)
                 else:
                     self._cached_font_title = ImageFont.load_default()
             except Exception:
@@ -634,7 +636,7 @@ class VolumeControl(ActionBase):
                 
             try:
                 if vol_font_file:
-                    self._cached_font_vol = ImageFont.truetype(vol_font_file, 19)
+                    self._cached_font_vol = ImageFont.truetype(vol_font_file, 19 * RENDER_SCALE)
                 else:
                     self._cached_font_vol = ImageFont.load_default()
             except Exception:
@@ -661,9 +663,10 @@ class VolumeControl(ActionBase):
             
         # Draw Volume Text (right-aligned, vertically centered at y=32)
         try:
-            draw.text((188, 32), vol_text, font=font_vol, fill=vol_color, anchor="rm")
+            draw.text((188 * RENDER_SCALE, 32 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="rm")
         except TypeError:
-            draw.text((188 - vol_w, 32 - 10), vol_text, font=font_vol, fill=vol_color)
+            vol_w_unscaled = vol_w / RENDER_SCALE
+            draw.text((int((188 - vol_w_unscaled) * RENDER_SCALE), int((32 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
         
         # Icon placement area (vertical center shifted to y=16, base size increased to 24)
         icon_drawn = False
@@ -676,7 +679,7 @@ class VolumeControl(ActionBase):
                     loaded_img = loaded_img.convert("RGBA")
                     base_size = 14
                     scaled_size = max(4, min(int(base_size * icon_scale), 28))
-                    self._cached_icon_img = loaded_img.resize((scaled_size, scaled_size))
+                    self._cached_icon_img = loaded_img.resize((scaled_size * RENDER_SCALE, scaled_size * RENDER_SCALE), Image.Resampling.LANCZOS)
                 else:
                     self._cached_icon_img = None
                 self._cached_icon_path = custom_icon_path
@@ -684,24 +687,27 @@ class VolumeControl(ActionBase):
             if self._cached_icon_img is not None:
                 icon_img = self._cached_icon_img.copy()
                 scaled_size = icon_img.width
+                scaled_size_unscaled = scaled_size // RENDER_SCALE
                 
                 # Keep within bounds: y between 6 and 38, x at 12
                 x_start = 12
-                y_start = 16 - scaled_size // 2
-                y_start = max(6, min(y_start, 38 - scaled_size))
+                y_start = 16 - scaled_size_unscaled // 2
+                y_start = max(6, min(y_start, 38 - scaled_size_unscaled))
                 
                 if is_muted:
                     r, g, b, a = icon_img.split()
                     a = a.point(lambda i: int(i * 0.4))
                     icon_img = Image.merge("RGBA", (r, g, b, a))
                 
-                img.paste(icon_img, (x_start, y_start), icon_img)
+                img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
                 
                 if is_muted:
-                    draw.line([(x_start - 2, y_start - 2), (x_start + scaled_size + 2, y_start + scaled_size + 2)], fill=(239, 68, 68, 255), width=2)
+                    draw.line([((x_start - 2) * RENDER_SCALE, (y_start - 2) * RENDER_SCALE), 
+                               ((x_start + scaled_size_unscaled + 2) * RENDER_SCALE, (y_start + scaled_size_unscaled + 2) * RENDER_SCALE)], 
+                              fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
                 
                 icon_drawn = True
-                icon_w = scaled_size
+                icon_w = scaled_size_unscaled
 
         if not icon_drawn:
             # Default Speaker Icon (slate-blue speaker with cyan/blue waves, shifted to y=16 center)
@@ -709,17 +715,37 @@ class VolumeControl(ActionBase):
             spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
             
             # Speaker body (centered vertically at y=16)
-            draw.rectangle([(spk_x, spk_y + 4), (spk_x + 5, spk_y + 10)], fill=spk_color)
+            draw.rectangle([
+                (spk_x * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+            ], fill=spk_color)
             # Speaker cone
-            draw.polygon([(spk_x + 5, spk_y + 4), (spk_x + 10, spk_y + 0), (spk_x + 10, spk_y + 14), (spk_x + 5, spk_y + 10)], fill=spk_color)
+            draw.polygon([
+                ((spk_x + 5) * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                ((spk_x + 10) * RENDER_SCALE, (spk_y + 0) * RENDER_SCALE), 
+                ((spk_x + 10) * RENDER_SCALE, (spk_y + 14) * RENDER_SCALE), 
+                ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+            ], fill=spk_color)
             
             if is_muted:
-                draw.line([(spk_x - 2, spk_y + 2), (spk_x + 16, spk_y + 12)], fill=(239, 68, 68, 255), width=2)
+                draw.line([
+                    ((spk_x - 2) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                    ((spk_x + 16) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                ], fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
             else:
                 wave_color = (0, 168, 255, 255)
-                draw.arc([(spk_x + 3, spk_y + 2), (spk_x + 13, spk_y + 12)], start=-45, end=45, fill=wave_color, width=2)
-                draw.arc([(spk_x, spk_y - 1), (spk_x + 18, spk_y + 15)], start=-45, end=45, fill=wave_color, width=2)
-                draw.arc([(spk_x - 3, spk_y - 4), (spk_x + 23, spk_y + 18)], start=-45, end=45, fill=wave_color, width=2)
+                draw.arc([
+                    ((spk_x + 3) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                    ((spk_x + 13) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+                draw.arc([
+                    (spk_x * RENDER_SCALE, (spk_y - 1) * RENDER_SCALE), 
+                    ((spk_x + 18) * RENDER_SCALE, (spk_y + 15) * RENDER_SCALE)
+                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+                draw.arc([
+                    ((spk_x - 3) * RENDER_SCALE, (spk_y - 4) * RENDER_SCALE), 
+                    ((spk_x + 23) * RENDER_SCALE, (spk_y + 18) * RENDER_SCALE)
+                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
             icon_w = 26
 
         # Draw Title Text (centered horizontally, using custom name if set)
@@ -753,48 +779,50 @@ class VolumeControl(ActionBase):
             self._last_title_font_size = title_font_size
             self._last_max_width = max_width
 
+            max_width_scaled = max_width * RENDER_SCALE
+
             try:
                 text_w = font_title.getlength(title_text)
             except Exception:
-                text_w = len(title_text) * (title_font_size * 0.6)
+                text_w = len(title_text) * (title_font_size * RENDER_SCALE * 0.6)
 
             current_size = title_font_size
-            while text_w > max_width and current_size > 9:
+            while text_w > max_width_scaled and current_size > 9:
                 current_size -= 1
                 try:
                     if font_file:
-                        temp_font = ImageFont.truetype(font_file, current_size)
+                        temp_font = ImageFont.truetype(font_file, current_size * RENDER_SCALE)
                     else:
                         temp_font = ImageFont.load_default()
                     
                     try:
                         text_w = temp_font.getlength(title_text)
                     except Exception:
-                        text_w = len(title_text) * (current_size * 0.6)
+                        text_w = len(title_text) * (current_size * RENDER_SCALE * 0.6)
                     font_title = temp_font
                 except Exception:
                     break
 
-            while text_w > max_width and len(title_text) > 3:
+            while text_w > max_width_scaled and len(title_text) > 3:
                 title_text = title_text[:-3] + ".."
                 try:
                     text_w = font_title.getlength(title_text)
                 except Exception:
-                    text_w = len(title_text) * (current_size * 0.6)
+                    text_w = len(title_text) * (current_size * RENDER_SCALE * 0.6)
             
             self._resolved_title_text = title_text
             self._resolved_font_title = font_title
         
         try:
-            draw.text((left_bound, 16), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="lm")
+            draw.text((left_bound * RENDER_SCALE, 16 * RENDER_SCALE), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="lm")
         except TypeError:
-            draw.text((left_bound, 16 - 8), title_text, font=font_title, fill=(220, 222, 230, 255))
+            draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text, font=font_title, fill=(220, 222, 230, 255))
         
         # 3. Dial Geometry (Perfect half-circle layout shifted up to fit within display edges)
-        cx, cy = 100, 92
-        r_outer = 45
-        r_inner = 42
-        r_arc = 48
+        cx, cy = 100 * RENDER_SCALE, 92 * RENDER_SCALE
+        r_outer = 45 * RENDER_SCALE
+        r_inner = 42 * RENDER_SCALE
+        r_arc = 48 * RENDER_SCALE
         bbox = [(cx - r_arc, cy - r_arc), (cx + r_arc, cy + r_arc)]
         
         # Draw Active Gauge Segments: static volume (dimmed) + live audio peak (fully bright) OR blue volume meter
@@ -809,7 +837,7 @@ class VolumeControl(ActionBase):
                 if self._cached_vol_mask is None:
                     vol_mask = Image.new("L", (width, height), 0)
                     vol_mask_draw = ImageDraw.Draw(vol_mask)
-                    vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7)
+                    vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7 * RENDER_SCALE)
                     self._cached_vol_mask = vol_mask
                     
                 img.paste(grad_img, (0, 0), self._cached_vol_mask)
@@ -821,7 +849,7 @@ class VolumeControl(ActionBase):
                     if peak_angle > 180:
                         # Reuse the pre-allocated peak mask to avoid heavy object instantiation
                         self._peak_mask_draw.rectangle([(0, 0), (width, height)], fill=0)
-                        self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7)
+                        self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
                         img.paste(grad_img, (0, 0), self._peak_mask)
 
                 # 3. Peak Hold marker (Floating bright indicator for studio console aesthetics)
@@ -830,11 +858,11 @@ class VolumeControl(ActionBase):
                     hold_angle = int(180 + 180 * scaled_hold)
                     if hold_angle > 180:
                         # Draw a small 2-degree bright highlight indicator directly on the image
-                        draw.arc(bbox, start=hold_angle - 1, end=hold_angle + 1, fill=(255, 75, 75, 255), width=7)
+                        draw.arc(bbox, start=hold_angle - 1, end=hold_angle + 1, fill=(255, 75, 75, 255), width=7 * RENDER_SCALE)
             else:
                 # Live meter is disabled -> draw a beautiful fully opaque blue volume meter in sync with knob pointer
                 if vol_angle > 180:
-                    draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7)
+                    draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7 * RENDER_SCALE)
 
         # 4. Draw Inner Knob Core (Outer shadow/border for 3D bevel look - using chord to keep strictly above cy)
         bbox_outer = [(cx - r_outer, cy - r_outer), (cx + r_outer, cy + r_outer)]
@@ -842,18 +870,20 @@ class VolumeControl(ActionBase):
         # Inner circle of the core (filled chord without outline, then draw.arc for outline only on curved top part)
         bbox_inner = [(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)]
         draw.chord(bbox_inner, start=180, end=360, fill=(28, 28, 32, 255))
-        draw.arc(bbox_inner, start=180, end=360, fill=(60, 62, 72, 255), width=1)
+        draw.arc(bbox_inner, start=180, end=360, fill=(60, 62, 72, 255), width=1 * RENDER_SCALE)
         
         # 5. Draw Pointer line on top of the knob (still represents static volume level)
         pointer_angle = 180 + 180 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
-        xp1 = cx + 12 * math.cos(rad_pt)
-        yp1 = cy + 12 * math.sin(rad_pt)
-        xp2 = cx + 36 * math.cos(rad_pt)
-        yp2 = cy + 36 * math.sin(rad_pt)
+        xp1 = cx + 12 * RENDER_SCALE * math.cos(rad_pt)
+        yp1 = cy + 12 * RENDER_SCALE * math.sin(rad_pt)
+        xp2 = cx + 36 * RENDER_SCALE * math.cos(rad_pt)
+        yp2 = cy + 36 * RENDER_SCALE * math.sin(rad_pt)
         pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
-        draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3)
+        draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3 * RENDER_SCALE)
         
+        if RENDER_SCALE > 1:
+            return img.resize((200, 100), Image.Resampling.LANCZOS)
         return img
 
     def get_font_path(self) -> str:
