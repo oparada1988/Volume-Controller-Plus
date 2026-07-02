@@ -338,10 +338,12 @@ class VolumeControl(ActionBase):
             self.change_volume(-self.get_step_size())
         elif event in [Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS, Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT]:
             settings = self.get_settings() or {}
-            if settings.get("device_switch", False) and event == Input.Dial.Events.SHORT_TOUCH_PRESS:
-                self.switch_active_device()
-            else:
+            device_switch_enabled = settings.get("device_switch", False)
+            if event == Input.Dial.Events.DOWN:
                 self.toggle_mute()
+            elif event == Input.Dial.Events.SHORT_TOUCH_PRESS:
+                if device_switch_enabled:
+                    self.switch_active_device()
         else:
             super()._raw_event_callback(event, data)
 
@@ -352,10 +354,12 @@ class VolumeControl(ActionBase):
             self.change_volume(-self.get_step_size())
         elif event in [Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS, Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT]:
             settings = self.get_settings() or {}
-            if settings.get("device_switch", False) and event == Input.Dial.Events.SHORT_TOUCH_PRESS:
-                self.switch_active_device()
-            else:
+            device_switch_enabled = settings.get("device_switch", False)
+            if event == Input.Dial.Events.DOWN:
                 self.toggle_mute()
+            elif event == Input.Dial.Events.SHORT_TOUCH_PRESS:
+                if device_switch_enabled:
+                    self.switch_active_device()
         else:
             super().event_callback(event, data)
 
@@ -893,10 +897,7 @@ class VolumeControl(ActionBase):
 
             # Title Text (wrapping and size calculation)
             left_bound = 12 + icon_w + 6
-            if device_switch_enabled:
-                right_bound = 188 - 22 - 6
-            else:
-                right_bound = 188
+            right_bound = 188 - 22 - 6
             max_width = right_bound - left_bound - 4
 
             if (self._resolved_title_text is not None and
@@ -959,18 +960,29 @@ class VolumeControl(ActionBase):
             except TypeError:
                 mid_draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255))
 
-            # Draw Device Switch Icon if enabled
+            # Draw Device Switch Icon (always drawn now, but uses different assets based on device_switch_enabled)
+            icon_to_draw = None
             if device_switch_enabled:
-                if not hasattr(self, "_cached_device_switch_img") or self._cached_device_switch_img is None:
+                if not hasattr(self, "_cached_device_switch_img_on") or self._cached_device_switch_img_on is None:
                     dev_switch_path = os.path.join(self.plugin_base.PATH, "assets", "device.png")
                     try:
                         loaded_img = Image.open(dev_switch_path).convert("RGBA")
-                        self._cached_device_switch_img = loaded_img.resize((22 * RENDER_SCALE, 22 * RENDER_SCALE), Image.Resampling.LANCZOS)
+                        self._cached_device_switch_img_on = loaded_img.resize((22 * RENDER_SCALE, 22 * RENDER_SCALE), Image.Resampling.LANCZOS)
                     except Exception:
-                        self._cached_device_switch_img = None
-                
-                if self._cached_device_switch_img is not None:
-                    mid_img.paste(self._cached_device_switch_img, (int((188 - 22) * RENDER_SCALE), int((16 - 11) * RENDER_SCALE)), self._cached_device_switch_img)
+                        self._cached_device_switch_img_on = None
+                icon_to_draw = getattr(self, "_cached_device_switch_img_on", None)
+            else:
+                if not hasattr(self, "_cached_device_switch_img_off") or self._cached_device_switch_img_off is None:
+                    dev_switch_path = os.path.join(self.plugin_base.PATH, "assets", "device_off.png")
+                    try:
+                        loaded_img = Image.open(dev_switch_path).convert("RGBA")
+                        self._cached_device_switch_img_off = loaded_img.resize((22 * RENDER_SCALE, 22 * RENDER_SCALE), Image.Resampling.LANCZOS)
+                    except Exception:
+                        self._cached_device_switch_img_off = None
+                icon_to_draw = getattr(self, "_cached_device_switch_img_off", None)
+
+            if icon_to_draw is not None:
+                mid_img.paste(icon_to_draw, (int((188 - 22) * RENDER_SCALE), int((16 - 11) * RENDER_SCALE)), icon_to_draw)
 
             # Dimmed volume level gradient arc OR blue volume meter (pre-rendered in midground)
             if not is_muted:
