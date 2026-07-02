@@ -174,6 +174,8 @@ class VolumeControl(ActionBase):
         self._cached_title_font_size = 14
         self._cached_base_bg = None
         self._cached_vol_mask = None
+        self._cached_midground = None
+        self._cached_midground_key = None
         self._current_peak = 0.0
         self._is_polling = False
 
@@ -594,7 +596,6 @@ class VolumeControl(ActionBase):
             bg_draw = ImageDraw.Draw(bg)
             
             # Pre-render Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
-            # Shifted center to x=70, y=94 and resize outer radius to 58 (width 116px, height 58px)
             cx_bg, cy_bg = 70 * RENDER_SCALE, 94 * RENDER_SCALE
             r_tick_major_start = 49 * RENDER_SCALE
             r_tick_major_end = 58 * RENDER_SCALE
@@ -622,292 +623,301 @@ class VolumeControl(ActionBase):
                 bg_draw.line([(x1, y1), (x2, y2)], fill=color, width=w)
                 
             # Pre-render Gauge Track (inactive - dark background arc)
-            # Adjusted base gauge arc radius to fit the new knob scale (46px)
             r_arc_bg = 46 * RENDER_SCALE
             bbox_bg = [(cx_bg - r_arc_bg, cy_bg - r_arc_bg), (cx_bg + r_arc_bg, cy_bg + r_arc_bg)]
             bg_draw.arc(bbox_bg, start=180, end=360, fill=(38, 38, 42, 255), width=7 * RENDER_SCALE)
             
             self._cached_base_bg = bg
-            
-        img = self._cached_base_bg.copy()
-        draw = ImageDraw.Draw(img)
-        
-        # 2. Header
+
+        # 2. Get settings/labels that form the midground cache key
         settings = self.get_settings() or {}
         custom_icon_path = settings.get("custom_icon", "")
-        if not custom_icon_path:
-            dtype = settings.get("device_type", "sink")
-            icon_filename = "input.png" if dtype == "source" else "output.png"
-            custom_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
-        icon_scale = 2.0
-
-        # Resolve and cache fonts if they have changed or are not cached
-        font_path = settings.get("font_path", "")
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
-        
-        if (self._cached_font_title is None or 
-            self._cached_font_vol is None or 
-            font_name != self._cached_font_name or 
-            font_path != self._cached_font_path):
-            
-            title_font_size = 14
-            font_file = None
-            
-            if font_name:
-                import re
-                match = re.search(r'\s+(\d+)$', font_name.strip())
-                if match:
-                    title_font_size = int(match.group(1))
-                
-                resolved_path = self.font_name_to_path(font_name)
-                if resolved_path and os.path.exists(resolved_path):
-                    font_file = resolved_path
-                    
-            if not font_file and font_path and os.path.exists(font_path):
-                font_file = font_path
-                
-            if not font_file:
-                for path in [
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-                    "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
-                    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    "/usr/share/fonts/dejavu/DejaVuSans.ttf"
-                ]:
-                    if os.path.exists(path):
-                        font_file = path
-                        break
-                        
-            vol_font_file = None
-            for path in [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
-                "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-                "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
-            ]:
-                if os.path.exists(path):
-                    vol_font_file = path
-                    break
-                    
-            try:
-                if font_file:
-                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size * RENDER_SCALE)
-                else:
-                    self._cached_font_title = ImageFont.load_default()
-            except Exception:
-                self._cached_font_title = ImageFont.load_default()
-                
-            try:
-                if vol_font_file:
-                    self._cached_font_vol = ImageFont.truetype(vol_font_file, 19 * RENDER_SCALE)
-                else:
-                    self._cached_font_vol = ImageFont.load_default()
-            except Exception:
-                self._cached_font_vol = ImageFont.load_default()
-                
-            self._cached_font_file = font_file
-            self._cached_title_font_size = title_font_size
-            self._cached_font_name = font_name
-            self._cached_font_path = font_path
-            
-        font_title = self._cached_font_title
-        font_vol = self._cached_font_vol
-        font_file = self._cached_font_file
-        title_font_size = self._cached_title_font_size
-
-        # Calculate volume text width to determine boundaries
-        vol_text = "MUTE" if is_muted else f"{volume}%"
-        vol_color = (239, 68, 68, 255) if is_muted else (255, 255, 255, 255)
-        
-        try:
-            vol_w = font_vol.getlength(vol_text)
-        except Exception:
-            vol_w = 40
-            
-        # Draw Volume Text (right of the knob, centered vertically)
-        try:
-            draw.text((165 * RENDER_SCALE, 68 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
-        except TypeError:
-            vol_w_unscaled = vol_w / RENDER_SCALE
-            draw.text((int((165 - vol_w_unscaled / 2) * RENDER_SCALE), int((68 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
-        
-        # Icon placement area (vertical center shifted to y=16, base size increased to 24)
-        icon_drawn = False
-        icon_w = 16  # Base width of the icon area
-        if custom_icon_path:
-            # Resolve and cache custom icon if path has changed
-            if custom_icon_path != self._cached_icon_path or self._cached_icon_img is None:
-                loaded_img = self.load_icon_image(custom_icon_path)
-                if loaded_img is not None:
-                    loaded_img = loaded_img.convert("RGBA")
-                    base_size = 14
-                    scaled_size = max(4, min(int(base_size * icon_scale), 28))
-                    self._cached_icon_img = loaded_img.resize((scaled_size * RENDER_SCALE, scaled_size * RENDER_SCALE), Image.Resampling.LANCZOS)
-                else:
-                    self._cached_icon_img = None
-                self._cached_icon_path = custom_icon_path
-                
-            if self._cached_icon_img is not None:
-                icon_img = self._cached_icon_img.copy()
-                scaled_size = icon_img.width
-                scaled_size_unscaled = scaled_size // RENDER_SCALE
-                
-                # Keep within bounds: y between 6 and 38, x at 12
-                x_start = 12
-                y_start = 16 - scaled_size_unscaled // 2
-                y_start = max(6, min(y_start, 38 - scaled_size_unscaled))
-                
-                if is_muted:
-                    r, g, b, a = icon_img.split()
-                    a = a.point(lambda i: int(i * 0.4))
-                    icon_img = Image.merge("RGBA", (r, g, b, a))
-                
-                img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
-                
-                if is_muted:
-                    draw.line([((x_start - 2) * RENDER_SCALE, (y_start - 2) * RENDER_SCALE), 
-                               ((x_start + scaled_size_unscaled + 2) * RENDER_SCALE, (y_start + scaled_size_unscaled + 2) * RENDER_SCALE)], 
-                              fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
-                
-                icon_drawn = True
-                icon_w = scaled_size_unscaled
-
-        if not icon_drawn:
-            # Default Speaker Icon (slate-blue speaker with cyan/blue waves, shifted to y=16 center)
-            spk_x, spk_y = 12, 9
-            spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
-            
-            # Speaker body (centered vertically at y=16)
-            draw.rectangle([
-                (spk_x * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
-                ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
-            ], fill=spk_color)
-            # Speaker cone
-            draw.polygon([
-                ((spk_x + 5) * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
-                ((spk_x + 10) * RENDER_SCALE, (spk_y + 0) * RENDER_SCALE), 
-                ((spk_x + 10) * RENDER_SCALE, (spk_y + 14) * RENDER_SCALE), 
-                ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
-            ], fill=spk_color)
-            
-            if is_muted:
-                draw.line([
-                    ((spk_x - 2) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
-                    ((spk_x + 16) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
-                ], fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
-            else:
-                wave_color = (0, 168, 255, 255)
-                draw.arc([
-                    ((spk_x + 3) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
-                    ((spk_x + 13) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
-                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
-                draw.arc([
-                    (spk_x * RENDER_SCALE, (spk_y - 1) * RENDER_SCALE), 
-                    ((spk_x + 18) * RENDER_SCALE, (spk_y + 15) * RENDER_SCALE)
-                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
-                draw.arc([
-                    ((spk_x - 3) * RENDER_SCALE, (spk_y - 4) * RENDER_SCALE), 
-                    ((spk_x + 23) * RENDER_SCALE, (spk_y + 18) * RENDER_SCALE)
-                ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
-            icon_w = 26
-
-        # Draw Title Text (centered horizontally, using custom name if set)
+        font_path = settings.get("font_path", "")
         custom_name = settings.get("custom_name", "")
-        if custom_name:
-            title_text = custom_name
-        else:
-            title_text = settings.get("pipewire_device_name", "Default Sink")
-            
-        left_bound = 12 + icon_w + 6
-        right_bound = 188
-        max_width = right_bound - left_bound - 4
+        title_text = custom_name if custom_name else settings.get("pipewire_device_name", "Default Sink")
 
-        # Highly optimized caching of title text layout and font parsing to avoid frame drop
-        if (self._resolved_title_text is not None and
-            self._resolved_font_title is not None and
-            title_text == self._last_title_text and
-            font_file == self._last_font_file and
-            font_name == self._last_font_name and
-            font_path == self._last_font_path and
-            title_font_size == self._last_title_font_size and
-            max_width == self._last_max_width):
-            
-            title_text = self._resolved_title_text
-            font_title = self._resolved_font_title
-        else:
-            self._last_title_text = title_text
-            self._last_font_file = font_file
-            self._last_font_name = font_name
-            self._last_font_path = font_path
-            self._last_title_font_size = title_font_size
-            self._last_max_width = max_width
+        midground_key = (
+            volume,
+            is_muted,
+            title_text,
+            custom_icon_path,
+            font_name,
+            font_path
+        )
 
-            max_width_scaled = max_width * RENDER_SCALE
-
-            try:
-                text_w = font_title.getlength(title_text)
-            except Exception:
-                text_w = len(title_text) * (title_font_size * RENDER_SCALE * 0.6)
-
-            current_size = title_font_size
-            while text_w > max_width_scaled and current_size > 9:
-                current_size -= 1
-                try:
-                    if font_file:
-                        temp_font = ImageFont.truetype(font_file, current_size * RENDER_SCALE)
-                    else:
-                        temp_font = ImageFont.load_default()
-                    
-                    try:
-                        text_w = temp_font.getlength(title_text)
-                    except Exception:
-                        text_w = len(title_text) * (current_size * RENDER_SCALE * 0.6)
-                    font_title = temp_font
-                except Exception:
-                    break
-
-            while text_w > max_width_scaled and len(title_text) > 3:
-                title_text = title_text[:-3] + ".."
-                try:
-                    text_w = font_title.getlength(title_text)
-                except Exception:
-                    text_w = len(title_text) * (current_size * RENDER_SCALE * 0.6)
-            
-            self._resolved_title_text = title_text
-            self._resolved_font_title = font_title
-        
-        try:
-            draw.text((left_bound * RENDER_SCALE, 16 * RENDER_SCALE), title_text, font=font_title, fill=(220, 222, 230, 255), anchor="lm")
-        except TypeError:
-            draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text, font=font_title, fill=(220, 222, 230, 255))
-        
-        # 3. Dial Geometry (Shifted to left and resized to fit 120x60 px)
         cx, cy = 70 * RENDER_SCALE, 94 * RENDER_SCALE
         r_outer = 43 * RENDER_SCALE
         r_inner = 40 * RENDER_SCALE
         r_arc = 46 * RENDER_SCALE
         bbox = [(cx - r_arc, cy - r_arc), (cx + r_arc, cy + r_arc)]
-        
-        # Draw Active Gauge Segments: static volume (dimmed) + live audio peak (fully bright) OR blue volume meter
-        if not is_muted:
-            vol_angle = int(180 + 180 * (volume / 100.0))
-            is_live_enabled = settings.get("live_meter", True)
+
+        # If cache misses, rebuild static midground card (Text, Icon, Background tracks)
+        if self._cached_midground is None or self._cached_midground_key != midground_key:
+            mid_img = self._cached_base_bg.copy()
+            mid_draw = ImageDraw.Draw(mid_img)
+
+            # Draw Volume Text (right of the knob, centered vertically)
+            vol_text = "MUTE" if is_muted else f"{volume}%"
+            vol_color = (239, 68, 68, 255) if is_muted else (255, 255, 255, 255)
             
+            # Resolve and cache fonts if they have changed or are not cached
+            if (self._cached_font_title is None or 
+                self._cached_font_vol is None or 
+                font_name != self._cached_font_name or 
+                font_path != self._cached_font_path):
+                
+                title_font_size = 14
+                font_file = None
+                
+                if font_name:
+                    import re
+                    match = re.search(r'\s+(\d+)$', font_name.strip())
+                    if match:
+                        title_font_size = int(match.group(1))
+                    
+                    resolved_path = self.font_name_to_path(font_name)
+                    if resolved_path and os.path.exists(resolved_path):
+                        font_file = resolved_path
+                        
+                if not font_file and font_path and os.path.exists(font_path):
+                    font_file = font_path
+                    
+                if not font_file:
+                    for path in [
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                        "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
+                        "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                        "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+                    ]:
+                        if os.path.exists(path):
+                            font_file = path
+                            break
+                            
+                vol_font_file = None
+                for path in [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/ubuntu/Ubuntu-B.ttf",
+                    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+                    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
+                ]:
+                    if os.path.exists(path):
+                        vol_font_file = path
+                        break
+                        
+                try:
+                    if font_file:
+                        self._cached_font_title = ImageFont.truetype(font_file, title_font_size * RENDER_SCALE)
+                    else:
+                        self._cached_font_title = ImageFont.load_default()
+                except Exception:
+                    self._cached_font_title = ImageFont.load_default()
+                    
+                try:
+                    if vol_font_file:
+                        self._cached_font_vol = ImageFont.truetype(vol_font_file, 19 * RENDER_SCALE)
+                    else:
+                        self._cached_font_vol = ImageFont.load_default()
+                except Exception:
+                    self._cached_font_vol = ImageFont.load_default()
+                    
+                self._cached_font_file = font_file
+                self._cached_title_font_size = title_font_size
+                self._cached_font_name = font_name
+                self._cached_font_path = font_path
+
+            font_title = self._cached_font_title
+            font_vol = self._cached_font_vol
+            font_file = self._cached_font_file
+            title_font_size = self._cached_title_font_size
+
+            try:
+                vol_w = font_vol.getlength(vol_text)
+            except Exception:
+                vol_w = 40
+                
+            try:
+                mid_draw.text((165 * RENDER_SCALE, 68 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
+            except TypeError:
+                vol_w_unscaled = vol_w / RENDER_SCALE
+                mid_draw.text((int((165 - vol_w_unscaled / 2) * RENDER_SCALE), int((68 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
+
+            # Icon Placement Area
+            icon_drawn = False
+            icon_w = 16
+            if not custom_icon_path:
+                dtype = settings.get("device_type", "sink")
+                icon_filename = "input.png" if dtype == "source" else "output.png"
+                custom_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
+            icon_scale = 2.0
+
+            if custom_icon_path:
+                if custom_icon_path != self._cached_icon_path or self._cached_icon_img is None:
+                    loaded_img = self.load_icon_image(custom_icon_path)
+                    if loaded_img is not None:
+                        loaded_img = loaded_img.convert("RGBA")
+                        base_size = 14
+                        scaled_size = max(4, min(int(base_size * icon_scale), 28))
+                        self._cached_icon_img = loaded_img.resize((scaled_size * RENDER_SCALE, scaled_size * RENDER_SCALE), Image.Resampling.LANCZOS)
+                    else:
+                        self._cached_icon_img = None
+                    self._cached_icon_path = custom_icon_path
+                    
+                if self._cached_icon_img is not None:
+                    icon_img = self._cached_icon_img.copy()
+                    scaled_size = icon_img.width
+                    scaled_size_unscaled = scaled_size // RENDER_SCALE
+                    x_start = 12
+                    y_start = 16 - scaled_size_unscaled // 2
+                    y_start = max(6, min(y_start, 38 - scaled_size_unscaled))
+                    
+                    if is_muted:
+                        r, g, b, a = icon_img.split()
+                        a = a.point(lambda i: int(i * 0.4))
+                        icon_img = Image.merge("RGBA", (r, g, b, a))
+                    
+                    mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
+                    
+                    if is_muted:
+                        mid_draw.line([((x_start - 2) * RENDER_SCALE, (y_start - 2) * RENDER_SCALE), 
+                                   ((x_start + scaled_size_unscaled + 2) * RENDER_SCALE, (y_start + scaled_size_unscaled + 2) * RENDER_SCALE)], 
+                                  fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
+                    icon_drawn = True
+                    icon_w = scaled_size_unscaled
+
+            if not icon_drawn:
+                spk_x, spk_y = 12, 9
+                spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
+                mid_draw.rectangle([
+                    (spk_x * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+                ], fill=spk_color)
+                mid_draw.polygon([
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                    ((spk_x + 10) * RENDER_SCALE, (spk_y + 0) * RENDER_SCALE), 
+                    ((spk_x + 10) * RENDER_SCALE, (spk_y + 14) * RENDER_SCALE), 
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+                ], fill=spk_color)
+                
+                if is_muted:
+                    mid_draw.line([
+                        ((spk_x - 2) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                        ((spk_x + 16) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                    ], fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
+                else:
+                    wave_color = (0, 168, 255, 255)
+                    mid_draw.arc([
+                        ((spk_x + 3) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                        ((spk_x + 13) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                    ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+                    mid_draw.arc([
+                        (spk_x * RENDER_SCALE, (spk_y - 1) * RENDER_SCALE), 
+                        ((spk_x + 18) * RENDER_SCALE, (spk_y + 15) * RENDER_SCALE)
+                    ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+                    mid_draw.arc([
+                        ((spk_x - 3) * RENDER_SCALE, (spk_y - 4) * RENDER_SCALE), 
+                        ((spk_x + 23) * RENDER_SCALE, (spk_y + 18) * RENDER_SCALE)
+                    ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+                icon_w = 26
+
+            # Title Text (wrapping and size calculation)
+            left_bound = 12 + icon_w + 6
+            right_bound = 188
+            max_width = right_bound - left_bound - 4
+
+            if (self._resolved_title_text is not None and
+                self._resolved_font_title is not None and
+                title_text == self._last_title_text and
+                font_file == self._last_font_file and
+                font_name == self._last_font_name and
+                font_path == self._last_font_path and
+                title_font_size == self._last_title_font_size and
+                max_width == self._last_max_width):
+                
+                title_text_to_draw = self._resolved_title_text
+                font_title_to_draw = self._resolved_font_title
+            else:
+                self._last_title_text = title_text
+                self._last_font_file = font_file
+                self._last_font_name = font_name
+                self._last_font_path = font_path
+                self._last_title_font_size = title_font_size
+                self._last_max_width = max_width
+
+                max_width_scaled = max_width * RENDER_SCALE
+                title_text_to_draw = title_text
+
+                try:
+                    text_w = font_title.getlength(title_text_to_draw)
+                except Exception:
+                    text_w = len(title_text_to_draw) * (title_font_size * RENDER_SCALE * 0.6)
+
+                current_size = title_font_size
+                font_title_to_draw = font_title
+                while text_w > max_width_scaled and current_size > 9:
+                    current_size -= 1
+                    try:
+                        if font_file:
+                            temp_font = ImageFont.truetype(font_file, current_size * RENDER_SCALE)
+                        else:
+                            temp_font = ImageFont.load_default()
+                        
+                        try:
+                            text_w = temp_font.getlength(title_text_to_draw)
+                        except Exception:
+                            text_w = len(title_text_to_draw) * (current_size * RENDER_SCALE * 0.6)
+                        font_title_to_draw = temp_font
+                    except Exception:
+                        break
+
+                while text_w > max_width_scaled and len(title_text_to_draw) > 3:
+                    title_text_to_draw = title_text_to_draw[:-3] + ".."
+                    try:
+                        text_w = font_title_to_draw.getlength(title_text_to_draw)
+                    except Exception:
+                        text_w = len(title_text_to_draw) * (current_size * RENDER_SCALE * 0.6)
+                
+                self._resolved_title_text = title_text_to_draw
+                self._resolved_font_title = font_title_to_draw
+            
+            try:
+                mid_draw.text((left_bound * RENDER_SCALE, 16 * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255), anchor="lm")
+            except TypeError:
+                mid_draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255))
+
+            # Dimmed volume level gradient arc OR blue volume meter (pre-rendered in midground)
+            if not is_muted:
+                is_live_enabled = settings.get("live_meter", True)
+                if is_live_enabled:
+                    grad_img = self._get_gauge_gradient_image(width, height, bbox)
+                    if self._cached_vol_mask is None:
+                        vol_mask = Image.new("L", (width, height), 0)
+                        vol_mask_draw = ImageDraw.Draw(vol_mask)
+                        vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7 * RENDER_SCALE)
+                        self._cached_vol_mask = vol_mask
+                    mid_img.paste(grad_img, (0, 0), self._cached_vol_mask)
+                else:
+                    vol_angle = int(180 + 180 * (volume / 100.0))
+                    if vol_angle > 180:
+                        mid_draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7 * RENDER_SCALE)
+
+            self._cached_midground = mid_img
+            self._cached_midground_key = midground_key
+
+        # 3. Instantiate dynamic frame image from cached midground
+        img = self._cached_midground.copy()
+        draw = ImageDraw.Draw(img)
+        
+        # 4. Draw Active Gauge Segments: live audio peak and peak-hold marker
+        if not is_muted:
+            is_live_enabled = settings.get("live_meter", True)
             if is_live_enabled:
                 grad_img = self._get_gauge_gradient_image(width, height, bbox)
                 
-                # 1. Dimmed volume level gradient arc (remains 100% visible - cached)
-                if self._cached_vol_mask is None:
-                    vol_mask = Image.new("L", (width, height), 0)
-                    vol_mask_draw = ImageDraw.Draw(vol_mask)
-                    vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7 * RENDER_SCALE)
-                    self._cached_vol_mask = vol_mask
-                    
-                img.paste(grad_img, (0, 0), self._cached_vol_mask)
-                
-                # 2. Fully bright audio peak gradient arc bouncing within/up to current volume
+                # Bouncing audio peak arc
                 if peak > 0.04:
                     scaled_peak = peak * (volume / 100.0)
                     peak_angle = int(180 + 180 * scaled_peak)
@@ -921,27 +931,22 @@ class VolumeControl(ActionBase):
                             self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
                             img.paste(grad_img, (0, 0), self._peak_mask)
 
-                # 3. Peak Hold marker (Floating bright indicator for studio console aesthetics)
+                # Peak Hold marker (Floating bright indicator for studio console aesthetics)
                 if self._peak_hold_val > 0.04:
                     scaled_hold = self._peak_hold_val * (volume / 100.0)
                     hold_angle = int(180 + 180 * scaled_hold)
                     if hold_angle > 180:
                         # Draw a small 2-degree bright highlight indicator directly on the image
                         draw.arc(bbox, start=hold_angle - 1, end=hold_angle + 1, fill=(255, 75, 75, 255), width=7 * RENDER_SCALE)
-            else:
-                # Live meter is disabled -> draw a beautiful fully opaque blue volume meter in sync with knob pointer
-                if vol_angle > 180:
-                    draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7 * RENDER_SCALE)
 
-        # 4. Draw Inner Knob Core (Outer shadow/border for 3D bevel look - using chord to keep strictly above cy)
+        # 5. Draw Inner Knob Core (Outer shadow/border + inner core chord & top curve arc)
         bbox_outer = [(cx - r_outer, cy - r_outer), (cx + r_outer, cy + r_outer)]
         draw.chord(bbox_outer, start=180, end=360, fill=(18, 18, 20, 255))
-        # Inner circle of the core (filled chord without outline, then draw.arc for outline only on curved top part)
         bbox_inner = [(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)]
         draw.chord(bbox_inner, start=180, end=360, fill=(28, 28, 32, 255))
         draw.arc(bbox_inner, start=180, end=360, fill=(60, 62, 72, 255), width=1 * RENDER_SCALE)
         
-        # 5. Draw Pointer line on top of the knob (still represents static volume level)
+        # 6. Draw Pointer line on top of the knob
         pointer_angle = 180 + 180 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
         xp1 = cx + 12 * RENDER_SCALE * math.cos(rad_pt)
