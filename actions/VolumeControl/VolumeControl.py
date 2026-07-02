@@ -894,7 +894,7 @@ class VolumeControl(ActionBase):
             # Title Text (wrapping and size calculation)
             left_bound = 12 + icon_w + 6
             if device_switch_enabled:
-                right_bound = 188 - 14 - 6
+                right_bound = 188 - 22 - 6
             else:
                 right_bound = 188
             max_width = right_bound - left_bound - 4
@@ -965,12 +965,12 @@ class VolumeControl(ActionBase):
                     dev_switch_path = os.path.join(self.plugin_base.PATH, "assets", "device.png")
                     try:
                         loaded_img = Image.open(dev_switch_path).convert("RGBA")
-                        self._cached_device_switch_img = loaded_img.resize((14 * RENDER_SCALE, 14 * RENDER_SCALE), Image.Resampling.LANCZOS)
+                        self._cached_device_switch_img = loaded_img.resize((22 * RENDER_SCALE, 22 * RENDER_SCALE), Image.Resampling.LANCZOS)
                     except Exception:
                         self._cached_device_switch_img = None
                 
                 if self._cached_device_switch_img is not None:
-                    mid_img.paste(self._cached_device_switch_img, (int((186 - 14) * RENDER_SCALE), int(9 * RENDER_SCALE)), self._cached_device_switch_img)
+                    mid_img.paste(self._cached_device_switch_img, (int((188 - 22) * RENDER_SCALE), int((16 - 11) * RENDER_SCALE)), self._cached_device_switch_img)
 
             # Dimmed volume level gradient arc OR blue volume meter (pre-rendered in midground)
             if not is_muted:
