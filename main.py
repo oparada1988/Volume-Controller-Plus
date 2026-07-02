@@ -39,6 +39,33 @@ class PluginTemplate(PluginBase):
             app_version = "1.0.0-alpha"
         )
 
+        # Apply robust Gtk/StreamController bug workarounds
+        try:
+            from src.windows.mainWindow.elements.Sidebar.elements.ActionConfigurator import CommentGroup
+            
+            # 1. Prevent TypeError: nothing connected
+            original_disconnect = CommentGroup.disconnect_signals
+            def safe_disconnect(self):
+                try:
+                    original_disconnect(self)
+                except TypeError:
+                    pass
+            CommentGroup.disconnect_signals = safe_disconnect
+            
+            # 2. Prevent IndexError: list index out of range on corrupted dials
+            original_get_comment = CommentGroup.get_comment
+            def safe_get_comment(self):
+                try:
+                    return original_get_comment(self)
+                except IndexError:
+                    return ""
+                except Exception:
+                    return ""
+            CommentGroup.get_comment = safe_get_comment
+            
+        except Exception:
+            pass
+
     def get_selector_icon(self) -> Gtk.Widget:
         icon_path = os.path.join(self.PATH, "assets", "tune.png")
         return Gtk.Image(file=icon_path)
