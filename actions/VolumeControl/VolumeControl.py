@@ -1162,6 +1162,11 @@ class VolumeControl(ActionBase):
             self.custom_name_row_2.set_visible(active)
         if hasattr(self, "icon_row_2"):
             self.icon_row_2.set_visible(active)
+        if hasattr(self, "custom_name_row"):
+            if active:
+                self.custom_name_row.set_title("Device Name 1")
+            else:
+                self.custom_name_row.set_title("Device Name")
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         settings = self.get_settings() or {}
