@@ -593,11 +593,12 @@ class VolumeControl(ActionBase):
             bg_draw = ImageDraw.Draw(bg)
             
             # Pre-render Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
-            cx_bg, cy_bg = 100 * RENDER_SCALE, 92 * RENDER_SCALE
-            r_tick_major_start = 51 * RENDER_SCALE
-            r_tick_major_end = 60 * RENDER_SCALE
-            r_tick_minor_start = 55 * RENDER_SCALE
-            r_tick_minor_end = 59 * RENDER_SCALE
+            # Shifted center to x=70, y=94 and resize outer radius to 58 (width 116px, height 58px)
+            cx_bg, cy_bg = 70 * RENDER_SCALE, 94 * RENDER_SCALE
+            r_tick_major_start = 49 * RENDER_SCALE
+            r_tick_major_end = 58 * RENDER_SCALE
+            r_tick_minor_start = 53 * RENDER_SCALE
+            r_tick_minor_end = 57 * RENDER_SCALE
             
             for i in range(17):
                 tick_angle = 180 + i * 11.25
@@ -620,7 +621,8 @@ class VolumeControl(ActionBase):
                 bg_draw.line([(x1, y1), (x2, y2)], fill=color, width=w)
                 
             # Pre-render Gauge Track (inactive - dark background arc)
-            r_arc_bg = 48 * RENDER_SCALE
+            # Adjusted base gauge arc radius to fit the new knob scale (46px)
+            r_arc_bg = 46 * RENDER_SCALE
             bbox_bg = [(cx_bg - r_arc_bg, cy_bg - r_arc_bg), (cx_bg + r_arc_bg, cy_bg + r_arc_bg)]
             bg_draw.arc(bbox_bg, start=180, end=360, fill=(38, 38, 42, 255), width=7 * RENDER_SCALE)
             
@@ -723,12 +725,12 @@ class VolumeControl(ActionBase):
         except Exception:
             vol_w = 40
             
-        # Draw Volume Text (right-aligned, vertically centered at y=32)
+        # Draw Volume Text (right of the knob, centered vertically)
         try:
-            draw.text((188 * RENDER_SCALE, 32 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="rm")
+            draw.text((165 * RENDER_SCALE, 68 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
         except TypeError:
             vol_w_unscaled = vol_w / RENDER_SCALE
-            draw.text((int((188 - vol_w_unscaled) * RENDER_SCALE), int((32 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
+            draw.text((int((165 - vol_w_unscaled / 2) * RENDER_SCALE), int((68 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
         
         # Icon placement area (vertical center shifted to y=16, base size increased to 24)
         icon_drawn = False
@@ -880,11 +882,11 @@ class VolumeControl(ActionBase):
         except TypeError:
             draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text, font=font_title, fill=(220, 222, 230, 255))
         
-        # 3. Dial Geometry (Perfect half-circle layout shifted up to fit within display edges)
-        cx, cy = 100 * RENDER_SCALE, 92 * RENDER_SCALE
-        r_outer = 45 * RENDER_SCALE
-        r_inner = 42 * RENDER_SCALE
-        r_arc = 48 * RENDER_SCALE
+        # 3. Dial Geometry (Shifted to left and resized to fit 120x60 px)
+        cx, cy = 70 * RENDER_SCALE, 94 * RENDER_SCALE
+        r_outer = 43 * RENDER_SCALE
+        r_inner = 40 * RENDER_SCALE
+        r_arc = 46 * RENDER_SCALE
         bbox = [(cx - r_arc, cy - r_arc), (cx + r_arc, cy + r_arc)]
         
         # Draw Active Gauge Segments: static volume (dimmed) + live audio peak (fully bright) OR blue volume meter
@@ -939,8 +941,8 @@ class VolumeControl(ActionBase):
         rad_pt = math.radians(pointer_angle)
         xp1 = cx + 12 * RENDER_SCALE * math.cos(rad_pt)
         yp1 = cy + 12 * RENDER_SCALE * math.sin(rad_pt)
-        xp2 = cx + 36 * RENDER_SCALE * math.cos(rad_pt)
-        yp2 = cy + 36 * RENDER_SCALE * math.sin(rad_pt)
+        xp2 = cx + 34 * RENDER_SCALE * math.cos(rad_pt)
+        yp2 = cy + 34 * RENDER_SCALE * math.sin(rad_pt)
         pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3 * RENDER_SCALE)
         
