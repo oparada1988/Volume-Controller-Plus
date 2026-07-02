@@ -912,10 +912,14 @@ class VolumeControl(ActionBase):
                     scaled_peak = peak * (volume / 100.0)
                     peak_angle = int(180 + 180 * scaled_peak)
                     if peak_angle > 180:
-                        # Reuse the pre-allocated peak mask to avoid heavy object instantiation
-                        self._peak_mask_draw.rectangle([(0, 0), (width, height)], fill=0)
-                        self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
-                        img.paste(grad_img, (0, 0), self._peak_mask)
+                        if peak >= 0.99:
+                            # Make the active meter solid red when it reaches 100% peak
+                            draw.arc(bbox, start=180, end=peak_angle, fill=(255, 30, 30, 255), width=7 * RENDER_SCALE)
+                        else:
+                            # Reuse the pre-allocated peak mask to avoid heavy object instantiation
+                            self._peak_mask_draw.rectangle([(0, 0), (width, height)], fill=0)
+                            self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
+                            img.paste(grad_img, (0, 0), self._peak_mask)
 
                 # 3. Peak Hold marker (Floating bright indicator for studio console aesthetics)
                 if self._peak_hold_val > 0.04:

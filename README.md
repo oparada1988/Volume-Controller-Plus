@@ -7,7 +7,7 @@ Volume Control plugin inspired by the official Elgato Volumen Mixer plugin. Mimi
 ## Features
 * **Dial Adjustment**: Smoothly turn dials to raise or lower PipeWire volume.
 * **Mute Toggle**: Press the dial or tap/drag on the touchscreen area to quickly mute/unmute.
-* **VU Meter**: Real-time peak monitor with smooth 40 FPS animations and a professional VU peak-hold floating marker.
+* **VU Meter**: Real-time peak monitor with smooth 40 FPS animations, a professional VU peak-hold floating marker, and a visual red warning when the audio peak reaches 100%.
 * **Custom Presentation**: Clean presentation with custom device names, fonts, and a custom SVG/PNG icon.
 
 ## Privacy & Desktop Indicators
