@@ -636,12 +636,14 @@ class VolumeControl(ActionBase):
         font_path = settings.get("font_path", "")
         custom_name = settings.get("custom_name", "")
         title_text = custom_name if custom_name else settings.get("pipewire_device_name", "Default Sink")
+        dtype = settings.get("device_type", "sink")
 
         midground_key = (
             volume,
             is_muted,
             title_text,
             custom_icon_path,
+            dtype,
             font_name,
             font_path
         )
