@@ -58,6 +58,7 @@ class VolumePeakMonitor:
             '--rate=44100',
             '--latency-msec=30',
             '--process-time-msec=10',
+            '--property=application.id=org.PulseAudio.pavucontrol',
             '--device=' + target_device
         ]
         try:

@@ -9,3 +9,6 @@ Volume Control plugin inspired by the official Elgato Volumen Mixer plugin. Mimi
 * **Mute Toggle**: Press the dial or tap/drag on the touchscreen area to quickly mute/unmute.
 * **VU Meter**: Real-time peak monitor with smooth 40 FPS animations and a professional VU peak-hold floating marker.
 * **Custom Presentation**: Clean presentation with custom device names, fonts, and a custom SVG/PNG icon.
+
+## Privacy & Desktop Indicators
+* **GNOME Microphone Icon Bypass**: The Live Peak Meter measures playback audio levels in real-time by starting a background `parecord` helper stream. To prevent GNOME Shell from displaying a persistent orange recording indicator (microphone icon) on your desktop panel, the stream's application ID is spoofed as `org.PulseAudio.pavucontrol`. Since this ID is on GNOME's hardcoded recording exclusion list, the Live Peak Meter can run cleanly without triggering system-wide privacy notifications.
