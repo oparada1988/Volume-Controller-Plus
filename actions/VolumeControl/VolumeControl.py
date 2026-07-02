@@ -83,8 +83,6 @@ class VolumePeakMonitor:
         flags = fcntl.fcntl(fd, fcntl.F_GETFL)
         fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-        chunk_bytes = 512 * 4
-        buf = bytearray()
         smooth_val = 0.0
         decay = 0.85
 
@@ -94,7 +92,8 @@ class VolumePeakMonitor:
                 if not ready:
                     continue
                 try:
-                    data = self.proc.stdout.read(chunk_bytes)
+                    # Drain the pipe to keep real-time sync (8192 bytes ≈ 46ms of audio)
+                    data = self.proc.stdout.read(8192)
                 except (OSError, IOError) as e:
                     import errno
                     if getattr(e, 'errno', None) in (errno.EAGAIN, errno.EWOULDBLOCK):
@@ -102,12 +101,13 @@ class VolumePeakMonitor:
                     continue
                 if not data:
                     break
-                buf.extend(data)
-                while len(buf) >= chunk_bytes:
-                    chunk = buf[:chunk_bytes]
-                    del buf[:chunk_bytes]
-
-                    samples = array.array('h', chunk)
+                
+                # Ensure the length is even for 16-bit short samples
+                if len(data) % 2 != 0:
+                    data = data[:-1]
+                
+                if data:
+                    samples = array.array('h', data)
                     if samples:
                         # High-performance absolute peak calculation using builtins in C
                         max_val = max(samples)
@@ -161,6 +161,7 @@ class VolumeControl(ActionBase):
         self.last_drawn_volume = -1
         self.last_drawn_mute = None
         self.last_drawn_peak = -1.0
+        self.last_drawn_hold = -1.0
         self._gauge_gradient_img = None
         self._render_lock = threading.RLock()
         
@@ -456,11 +457,15 @@ class VolumeControl(ActionBase):
                 self._peak_hold_val = max(raw_peak, self._peak_hold_val * 0.96 - 0.003)
         
         peak_diff = abs(peak - self.last_drawn_peak)
+        hold_diff = abs(self._peak_hold_val - self.last_drawn_hold)
         if (self.current_volume != self.last_drawn_volume or 
             self.last_mute != self.last_drawn_mute or 
             (peak > 0.0 and peak_diff > 0.01) or 
-            (peak == 0.0 and self.last_drawn_peak > 0.0)):
+            (self._peak_hold_val > 0.0 and hold_diff > 0.01) or
+            (peak == 0.0 and self.last_drawn_peak > 0.0) or
+            (self._peak_hold_val == 0.0 and self.last_drawn_hold > 0.0)):
             
+            self.last_drawn_hold = self._peak_hold_val
             self.update_ui_rendering(peak)
             
         return True
@@ -1043,7 +1048,7 @@ class VolumeControl(ActionBase):
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3 * RENDER_SCALE)
         
         if RENDER_SCALE > 1:
-            return img.resize((200, 100), Image.Resampling.LANCZOS)
+            return img.resize((200, 100), Image.Resampling.BILINEAR)
         return img
 
     def get_font_path(self) -> str:
