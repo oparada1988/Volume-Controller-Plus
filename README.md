@@ -6,9 +6,11 @@ Volume Control plugin inspired by the official Elgato Volumen Mixer plugin. Mimi
 
 ## Features
 * **Dial Adjustment**: Smoothly turn dials to raise or lower PipeWire volume.
-* **Mute Toggle**: Press the dial or tap/drag on the touchscreen area to quickly mute/unmute.
+* **Mute Toggle**: Press the dial to quickly mute/unmute.
+* **Dual-Device Switching**: Connect two separate PipeWire devices (any combination of inputs/sources or outputs/sinks) to a single dial control. When active, tap the touchscreen to instantly switch control between the two devices.
+* **Touchscreen Controls**: Touchscreen tap transitions between devices, with smart input lockouts when the switch is disabled to prevent accidental gestures.
 * **VU Meter**: Real-time peak monitor with smooth 40 FPS animations, a professional VU peak-hold floating marker, and a visual red warning when the audio peak reaches 100%.
-* **Custom Presentation**: Clean presentation with custom device names, fonts, and a custom SVG/PNG icon.
+* **Custom Presentation**: Clean layout with separate name entries, configurable fonts, custom device icons, active/inactive device status indicators in the corner, and automated text truncation to prevent layout overlaps.
 
 ## Privacy & Desktop Indicators
 * **GNOME Microphone Icon Bypass**: The Live Peak Meter measures playback audio levels in real-time by starting a background `parecord` helper stream. To prevent GNOME Shell from displaying a persistent orange recording indicator (microphone icon) on your desktop panel, the stream's application ID is spoofed as `org.PulseAudio.pavucontrol`. Since this ID is on GNOME's hardcoded recording exclusion list, the Live Peak Meter can run cleanly without triggering system-wide privacy notifications.
