@@ -845,12 +845,6 @@ class VolumeControl(ActionBase):
                     x_start = 12
                     y_start = 16 - scaled_size_unscaled // 2
                     y_start = max(6, min(y_start, 38 - scaled_size_unscaled))
-                    
-                    if is_muted:
-                        r, g, b, a = icon_img.split()
-                        a = a.point(lambda i: int(i * 0.4))
-                        icon_img = Image.merge("RGBA", (r, g, b, a))
-                    
                     mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
                     
                     icon_drawn = True
