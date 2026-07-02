@@ -640,7 +640,7 @@ class VolumeControl(ActionBase):
 
         # Resolve and cache fonts if they have changed or are not cached
         font_path = settings.get("font_path", "")
-        font_name = settings.get("font_name", "")
+        font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         
         if (self._cached_font_title is None or 
             self._cached_font_vol is None or 
@@ -1068,10 +1068,7 @@ class VolumeControl(ActionBase):
         self.icon_row.add_suffix(self.clear_icon_button)
 
         # 7. Custom Font Row (using FontChooserDialog)
-        friendly_font_name = settings.get("font_name")
-        if not friendly_font_name:
-            font_path_val = settings.get("font_path", "Ubuntu-B.ttf")
-            friendly_font_name = os.path.basename(font_path_val).replace(".ttf", "").replace(".otf", "").replace("-", " ")
+        friendly_font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         self.font_row = Adw.ActionRow(
             title="Font",
             subtitle=friendly_font_name,
