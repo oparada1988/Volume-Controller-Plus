@@ -150,6 +150,7 @@ class VolumeControl(ActionBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.running = False
+        self.active_device_index = 1
         self.current_volume = 50
         self.last_mute = False
         self.bg_image = None
@@ -259,8 +260,10 @@ class VolumeControl(ActionBase):
 
     def _initial_load_status(self):
         settings = self.get_settings() or {}
+        updated = False
         if not settings.get("device_type"):
             settings["device_type"] = "sink"
+            updated = True
             
         dtype = settings.get("device_type", "sink")
         sinks, sources = self.get_pipewire_devices()
@@ -269,6 +272,24 @@ class VolumeControl(ActionBase):
         if not settings.get("pipewire_device_id") and devices:
             settings["pipewire_device_id"] = devices[0][0]
             settings["pipewire_device_name"] = devices[0][1]
+            updated = True
+
+        if not settings.get("device_type_2"):
+            settings["device_type_2"] = "sink"
+            updated = True
+            
+        dtype_2 = settings.get("device_type_2", "sink")
+        devices_2 = sinks if dtype_2 == "sink" else sources
+        if not settings.get("pipewire_device_id_2") and devices_2:
+            primary_id = settings.get("pipewire_device_id")
+            selected_dev = devices_2[0]
+            if len(devices_2) > 1 and selected_dev[0] == primary_id:
+                selected_dev = devices_2[1]
+            settings["pipewire_device_id_2"] = selected_dev[0]
+            settings["pipewire_device_name_2"] = selected_dev[1]
+            updated = True
+            
+        if updated:
             self.set_settings(settings)
             
         vol, mute = self.get_system_volume_status()
@@ -316,7 +337,11 @@ class VolumeControl(ActionBase):
         elif event == Input.Dial.Events.TURN_CCW:
             self.change_volume(-self.get_step_size())
         elif event in [Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS, Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT]:
-            self.toggle_mute()
+            settings = self.get_settings() or {}
+            if settings.get("device_switch", False) and event == Input.Dial.Events.SHORT_TOUCH_PRESS:
+                self.switch_active_device()
+            else:
+                self.toggle_mute()
         else:
             super()._raw_event_callback(event, data)
 
@@ -326,11 +351,35 @@ class VolumeControl(ActionBase):
         elif event == Input.Dial.Events.TURN_CCW:
             self.change_volume(-self.get_step_size())
         elif event in [Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS, Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT]:
-            self.toggle_mute()
+            settings = self.get_settings() or {}
+            if settings.get("device_switch", False) and event == Input.Dial.Events.SHORT_TOUCH_PRESS:
+                self.switch_active_device()
+            else:
+                self.toggle_mute()
         else:
             super().event_callback(event, data)
 
+    def get_active_device_type(self) -> str:
+        settings = self.get_settings() or {}
+        active = getattr(self, "active_device_index", 1)
+        if active == 2 and settings.get("device_switch", False):
+            return settings.get("device_type_2", "sink")
+        return settings.get("device_type", "sink")
 
+    def switch_active_device(self):
+        settings = self.get_settings() or {}
+        if not settings.get("device_switch", False):
+            return
+            
+        self.active_device_index = 2 if getattr(self, "active_device_index", 1) == 1 else 1
+        
+        # Load the volume and mute status of the new active device quickly
+        vol, mute = self.get_system_volume_status()
+        self.current_volume = vol
+        self.last_mute = mute
+        
+        self.restart_peak_monitor()
+        self.update_ui_rendering(force=True)
 
     def get_step_size(self) -> int:
         settings = self.get_settings()
@@ -350,17 +399,25 @@ class VolumeControl(ActionBase):
 
     def get_configured_device_id(self) -> str:
         settings = self.get_settings() or {}
-        dev_id = settings.get("pipewire_device_id", "@DEFAULT_AUDIO_SINK@")
-        if dev_id == "@DEFAULT_AUDIO_SINK@":
+        active = getattr(self, "active_device_index", 1)
+        if active == 2 and settings.get("device_switch", False):
+            dtype = settings.get("device_type_2", "sink")
+            default_id = "@DEFAULT_AUDIO_SOURCE@" if dtype == "source" else "@DEFAULT_AUDIO_SINK@"
+            dev_id = settings.get("pipewire_device_id_2", default_id)
+        else:
+            dtype = settings.get("device_type", "sink")
+            default_id = "@DEFAULT_AUDIO_SOURCE@" if dtype == "source" else "@DEFAULT_AUDIO_SINK@"
+            dev_id = settings.get("pipewire_device_id", default_id)
+            
+        if dev_id in ["@DEFAULT_AUDIO_SINK@", "@DEFAULT_SINK@"]:
             return "@DEFAULT_SINK@"
-        elif dev_id == "@DEFAULT_AUDIO_SOURCE@":
+        elif dev_id in ["@DEFAULT_AUDIO_SOURCE@", "@DEFAULT_SOURCE@"]:
             return "@DEFAULT_SOURCE@"
         return dev_id
 
     def restart_peak_monitor(self):
         device_id = self.get_configured_device_id()
-        settings = self.get_settings() or {}
-        dtype = settings.get("device_type", "sink")
+        dtype = self.get_active_device_type()
         is_source = (dtype == "source")
         self.peak_monitor.start(device_id, is_source)
 
@@ -474,8 +531,7 @@ class VolumeControl(ActionBase):
         return sinks, sources
 
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
-        settings = self.get_settings() or {}
-        dtype = settings.get("device_type", "sink")
+        dtype = self.get_active_device_type()
         cmd_type = "sink" if dtype == "sink" else "source"
         
         volume = self.current_volume
@@ -505,8 +561,7 @@ class VolumeControl(ActionBase):
         return self.get_pipewire_status(device_id)
 
     def change_pipewire_volume(self, device_id: str, target_vol: int) -> None:
-        settings = self.get_settings() or {}
-        dtype = settings.get("device_type", "sink")
+        dtype = self.get_active_device_type()
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
             self.execute_cmd(["pactl", f"set-{cmd_type}-volume", device_id, f"{target_vol}%"])
@@ -523,8 +578,7 @@ class VolumeControl(ActionBase):
         self.change_pipewire_volume(device_id, target_vol)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
-        settings = self.get_settings() or {}
-        dtype = settings.get("device_type", "sink")
+        dtype = self.get_active_device_type()
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
             self.execute_cmd(["pactl", f"set-{cmd_type}-mute", device_id, "toggle"])
@@ -631,12 +685,23 @@ class VolumeControl(ActionBase):
 
         # 2. Get settings/labels that form the midground cache key
         settings = self.get_settings() or {}
-        custom_icon_path = settings.get("custom_icon", "")
+        active = getattr(self, "active_device_index", 1)
+        device_switch_enabled = settings.get("device_switch", False)
+        
+        if active == 2 and device_switch_enabled:
+            custom_icon_path = settings.get("custom_icon_2", "")
+            custom_name = settings.get("custom_name_2", "")
+            pw_name = settings.get("pipewire_device_name_2", "Default Sink")
+            dtype = settings.get("device_type_2", "sink")
+        else:
+            custom_icon_path = settings.get("custom_icon", "")
+            custom_name = settings.get("custom_name", "")
+            pw_name = settings.get("pipewire_device_name", "Default Sink")
+            dtype = settings.get("device_type", "sink")
+            
+        title_text = custom_name if custom_name else pw_name
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         font_path = settings.get("font_path", "")
-        custom_name = settings.get("custom_name", "")
-        title_text = custom_name if custom_name else settings.get("pipewire_device_name", "Default Sink")
-        dtype = settings.get("device_type", "sink")
 
         midground_key = (
             volume,
@@ -645,7 +710,9 @@ class VolumeControl(ActionBase):
             custom_icon_path,
             dtype,
             font_name,
-            font_path
+            font_path,
+            active,
+            device_switch_enabled
         )
 
         cx, cy = 70 * RENDER_SCALE, 94 * RENDER_SCALE
@@ -751,7 +818,6 @@ class VolumeControl(ActionBase):
             icon_drawn = False
             icon_w = 16
             if not custom_icon_path:
-                dtype = settings.get("device_type", "sink")
                 icon_filename = "input.png" if dtype == "source" else "output.png"
                 custom_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
             icon_scale = 2.0
@@ -827,7 +893,10 @@ class VolumeControl(ActionBase):
 
             # Title Text (wrapping and size calculation)
             left_bound = 12 + icon_w + 6
-            right_bound = 188
+            if device_switch_enabled:
+                right_bound = 188 - 14 - 6
+            else:
+                right_bound = 188
             max_width = right_bound - left_bound - 4
 
             if (self._resolved_title_text is not None and
@@ -889,6 +958,19 @@ class VolumeControl(ActionBase):
                 mid_draw.text((left_bound * RENDER_SCALE, 16 * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255), anchor="lm")
             except TypeError:
                 mid_draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255))
+
+            # Draw Device Switch Icon if enabled
+            if device_switch_enabled:
+                if not hasattr(self, "_cached_device_switch_img") or self._cached_device_switch_img is None:
+                    dev_switch_path = os.path.join(self.plugin_base.PATH, "assets", "device.png")
+                    try:
+                        loaded_img = Image.open(dev_switch_path).convert("RGBA")
+                        self._cached_device_switch_img = loaded_img.resize((14 * RENDER_SCALE, 14 * RENDER_SCALE), Image.Resampling.LANCZOS)
+                    except Exception:
+                        self._cached_device_switch_img = None
+                
+                if self._cached_device_switch_img is not None:
+                    mid_img.paste(self._cached_device_switch_img, (int((186 - 14) * RENDER_SCALE), int(9 * RENDER_SCALE)), self._cached_device_switch_img)
 
             # Dimmed volume level gradient arc OR blue volume meter (pre-rendered in midground)
             if not is_muted:
@@ -970,6 +1052,8 @@ class VolumeControl(ActionBase):
 
 
     def update_device_dropdown(self):
+        if not hasattr(self, "pw_device_selector"):
+            return
         settings = self.get_settings() or {}
         dtype = settings.get("device_type", "sink")
         
@@ -1012,6 +1096,61 @@ class VolumeControl(ActionBase):
         self.pw_device_selector.set_selected(selected_index)
         self._updating_dropdown = False
 
+    def update_device_dropdown_2(self):
+        if not hasattr(self, "pw_device_selector_2"):
+            return
+        settings = self.get_settings() or {}
+        dtype_2 = settings.get("device_type_2", "sink")
+        
+        self.pw_devices_map_2 = []
+        if dtype_2 == "sink":
+            sinks, _ = self.get_pipewire_devices()
+            for s_id, s_name in sinks:
+                self.pw_devices_map_2.append((s_id, s_name))
+        else:
+            _, sources = self.get_pipewire_devices()
+            for s_id, s_name in sources:
+                self.pw_devices_map_2.append((s_id, s_name))
+                
+        self.pw_device_model_2 = Gtk.StringList()
+        for pw_id, display_name in self.pw_devices_map_2:
+            self.pw_device_model_2.append(display_name)
+            
+        self.pw_device_selector_2.set_model(self.pw_device_model_2)
+        
+        current_pw_id = settings.get("pipewire_device_id_2")
+        if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map_2):
+            if self.pw_devices_map_2:
+                current_pw_id = self.pw_devices_map_2[0][0]
+                settings["pipewire_device_id_2"] = current_pw_id
+                settings["pipewire_device_name_2"] = self.pw_devices_map_2[0][1]
+                self.set_settings(settings)
+            else:
+                current_pw_id = ""
+                settings["pipewire_device_id_2"] = ""
+                settings["pipewire_device_name_2"] = ""
+                self.set_settings(settings)
+            
+        selected_index = 0
+        for idx, (pw_id, display_name) in enumerate(self.pw_devices_map_2):
+            if pw_id == current_pw_id:
+                selected_index = idx
+                break
+                
+        self._updating_dropdown_2 = True
+        self.pw_device_selector_2.set_selected(selected_index)
+        self._updating_dropdown_2 = False
+
+    def update_visibility(self, active: bool):
+        if hasattr(self, "type_selector_2"):
+            self.type_selector_2.set_visible(active)
+        if hasattr(self, "pw_device_selector_2"):
+            self.pw_device_selector_2.set_visible(active)
+        if hasattr(self, "custom_name_row_2"):
+            self.custom_name_row_2.set_visible(active)
+        if hasattr(self, "icon_row_2"):
+            self.icon_row_2.set_visible(active)
+
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         settings = self.get_settings() or {}
         dtype = settings.get("device_type", "sink")
@@ -1020,6 +1159,12 @@ class VolumeControl(ActionBase):
         self.custom_name_row = Adw.EntryRow(
             title="Device Name",
             text=settings.get("custom_name", "")
+        )
+
+        # 1b. Custom Name 2 Row
+        self.custom_name_row_2 = Adw.EntryRow(
+            title="Device Name 2",
+            text=settings.get("custom_name_2", "")
         )
 
         # 2. Device Type Selector
@@ -1039,6 +1184,30 @@ class VolumeControl(ActionBase):
         
         # Populate initial list
         self.update_device_dropdown()
+
+        # 3b. Device Switch Row
+        self.device_switch_row = Adw.SwitchRow(
+            title="Device Switch"
+        )
+        device_switch_active = settings.get("device_switch", False)
+        self.device_switch_row.set_active(device_switch_active)
+
+        # 3c. Device Type 2 Selector
+        dtype_2 = settings.get("device_type_2", "sink")
+        self.type_model_2 = Gtk.StringList()
+        self.type_model_2.append("Output (sink)")
+        self.type_model_2.append("Input (source)")
+        self.type_selector_2 = Adw.ComboRow(
+            model=self.type_model_2,
+            title="Device Type 2"
+        )
+        self.type_selector_2.set_selected(0 if dtype_2 == "sink" else 1)
+
+        # 3d. PipeWire Device 2 Selector ComboRow
+        self.pw_device_selector_2 = Adw.ComboRow(
+            title="PipeWire Device 2"
+        )
+        self.update_device_dropdown_2()
         
         # 4. Step size selector
         self.step_model = Gtk.StringList()
@@ -1077,9 +1246,24 @@ class VolumeControl(ActionBase):
         self.clear_icon_button.set_valign(Gtk.Align.CENTER)
         self.clear_icon_button.set_tooltip_text("Clear Icon")
         
-        # Add suffixes: choose_icon_button, then clear_icon_button
         self.icon_row.add_suffix(self.choose_icon_button)
         self.icon_row.add_suffix(self.clear_icon_button)
+
+        # 6b. Custom Icon 2 selection
+        self.icon_row_2 = Adw.ActionRow(
+            title="Custom Icon 2"
+        )
+        
+        self.choose_icon_button_2 = Gtk.Button.new_from_icon_name("document-open-symbolic")
+        self.choose_icon_button_2.set_valign(Gtk.Align.CENTER)
+        self.choose_icon_button_2.set_tooltip_text("Choose Icon 2")
+        
+        self.clear_icon_button_2 = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
+        self.clear_icon_button_2.set_valign(Gtk.Align.CENTER)
+        self.clear_icon_button_2.set_tooltip_text("Clear Icon 2")
+        
+        self.icon_row_2.add_suffix(self.choose_icon_button_2)
+        self.icon_row_2.add_suffix(self.clear_icon_button_2)
 
         # 7. Custom Font Row (using FontChooserDialog)
         friendly_font_name = settings.get("font_name", "DejaVu Sans Bold 15")
@@ -1094,24 +1278,33 @@ class VolumeControl(ActionBase):
 
         # Connect changes to save settings
         self.custom_name_row.connect("notify::text", self.on_custom_name_changed)
+        self.custom_name_row_2.connect("notify::text", self.on_custom_name_2_changed)
         self.type_selector.connect("notify::selected-item", self.on_device_type_changed)
         self.pw_device_selector.connect("notify::selected-item", self.on_pw_device_changed)
+        self.device_switch_row.connect("notify::active", self.on_device_switch_toggled)
+        self.type_selector_2.connect("notify::selected-item", self.on_device_type_2_changed)
+        self.pw_device_selector_2.connect("notify::selected-item", self.on_pw_device_2_changed)
         self.step_selector.connect("notify::selected-item", self.on_step_changed)
         self.live_meter_row.connect("notify::active", self.on_live_meter_toggled)
         self.choose_icon_button.connect("clicked", self.on_choose_icon_clicked)
         self.clear_icon_button.connect("clicked", self.on_clear_icon_clicked)
+        self.choose_icon_button_2.connect("clicked", self.on_choose_icon_2_clicked)
+        self.clear_icon_button_2.connect("clicked", self.on_clear_icon_2_clicked)
         self.font_row.connect("activated", self.on_choose_font_clicked)
         self.choose_font_button.connect("clicked", self.on_choose_font_clicked)
         
         # Update clear button sensitivity
         icon_path = settings.get("custom_icon", "")
         self.clear_icon_button.set_sensitive(bool(icon_path))
+        icon_path_2 = settings.get("custom_icon_2", "")
+        self.clear_icon_button_2.set_sensitive(bool(icon_path_2))
         
         # Create Text (Device Name) Expander Row
         self.text_expander = Adw.ExpanderRow(
             title="Device Name"
         )
         self.text_expander.add_row(self.custom_name_row)
+        self.text_expander.add_row(self.custom_name_row_2)
         self.text_expander.add_row(self.font_row)
 
         # Create Icon Expander Row
@@ -1119,11 +1312,18 @@ class VolumeControl(ActionBase):
             title="Icon Configuration"
         )
         self.icon_expander.add_row(self.icon_row)
+        self.icon_expander.add_row(self.icon_row_2)
+        
+        # Update visibility of the secondary device rows based on switch state
+        self.update_visibility(device_switch_active)
         
         return [
             self.text_expander,
             self.type_selector,
             self.pw_device_selector,
+            self.device_switch_row,
+            self.type_selector_2,
+            self.pw_device_selector_2,
             self.step_selector,
             self.live_meter_row,
             self.icon_expander
@@ -1132,6 +1332,12 @@ class VolumeControl(ActionBase):
     def on_custom_name_changed(self, entry, *args):
         settings = self.get_settings() or {}
         settings["custom_name"] = entry.get_text()
+        self.set_settings(settings)
+        self.update_ui_rendering(force=True)
+
+    def on_custom_name_2_changed(self, entry, *args):
+        settings = self.get_settings() or {}
+        settings["custom_name_2"] = entry.get_text()
         self.set_settings(settings)
         self.update_ui_rendering(force=True)
 
@@ -1157,7 +1363,31 @@ class VolumeControl(ActionBase):
         self.update_device_dropdown()
         
         # Restart monitor and draw
-        self.restart_peak_monitor()
+        if getattr(self, "active_device_index", 1) == 1:
+            self.restart_peak_monitor()
+        self.update_ui_rendering(force=True)
+
+    def on_device_type_2_changed(self, combo, *args):
+        selected_index = combo.get_selected()
+        new_type = "sink" if selected_index == 0 else "source"
+        
+        settings = self.get_settings() or {}
+        settings["device_type_2"] = new_type
+        
+        sinks, sources = self.get_pipewire_devices()
+        devices = sinks if new_type == "sink" else sources
+        if devices:
+            settings["pipewire_device_id_2"] = devices[0][0]
+            settings["pipewire_device_name_2"] = devices[0][1]
+        else:
+            settings["pipewire_device_id_2"] = ""
+            settings["pipewire_device_name_2"] = ""
+        self.set_settings(settings)
+        
+        self.update_device_dropdown_2()
+        
+        if getattr(self, "active_device_index", 1) == 2:
+            self.restart_peak_monitor()
         self.update_ui_rendering(force=True)
 
     def on_pw_device_changed(self, combo, *args):
@@ -1171,7 +1401,23 @@ class VolumeControl(ActionBase):
             settings["pipewire_device_name"] = display_name
             self.set_settings(settings)
             
-            self.restart_peak_monitor()
+            if getattr(self, "active_device_index", 1) == 1:
+                self.restart_peak_monitor()
+            self.update_ui_rendering(force=True)
+
+    def on_pw_device_2_changed(self, combo, *args):
+        if getattr(self, "_updating_dropdown_2", False):
+            return
+        selected_index = combo.get_selected()
+        if 0 <= selected_index < len(self.pw_devices_map_2):
+            pw_id, display_name = self.pw_devices_map_2[selected_index]
+            settings = self.get_settings() or {}
+            settings["pipewire_device_id_2"] = pw_id
+            settings["pipewire_device_name_2"] = display_name
+            self.set_settings(settings)
+            
+            if getattr(self, "active_device_index", 1) == 2:
+                self.restart_peak_monitor()
             self.update_ui_rendering(force=True)
 
     def on_step_changed(self, combo, *args):
@@ -1216,6 +1462,22 @@ class VolumeControl(ActionBase):
             
         GLib.idle_add(gl.app.let_user_select_asset, current_val, on_select_callback)
 
+    def on_choose_icon_2_clicked(self, button):
+        settings = self.get_settings() or {}
+        current_val = settings.get("custom_icon_2", "")
+        
+        def on_select_callback(path):
+            if not path:
+                return
+            settings = self.get_settings() or {}
+            settings["custom_icon_2"] = path
+            self.set_settings(settings)
+            
+            self.clear_icon_button_2.set_sensitive(True)
+            self.update_ui_rendering(force=True)
+            
+        GLib.idle_add(gl.app.let_user_select_asset, current_val, on_select_callback)
+
     def on_clear_icon_clicked(self, button):
         settings = self.get_settings() or {}
         settings["custom_icon"] = ""
@@ -1224,7 +1486,30 @@ class VolumeControl(ActionBase):
         self.clear_icon_button.set_sensitive(False)
         self.update_ui_rendering(force=True)
 
+    def on_clear_icon_2_clicked(self, button):
+        settings = self.get_settings() or {}
+        settings["custom_icon_2"] = ""
+        self.set_settings(settings)
+        
+        self.clear_icon_button_2.set_sensitive(False)
+        self.update_ui_rendering(force=True)
 
+    def on_device_switch_toggled(self, row, *args):
+        active = row.get_active()
+        settings = self.get_settings() or {}
+        settings["device_switch"] = active
+        self.set_settings(settings)
+        
+        self.update_visibility(active)
+        
+        if not active:
+            self.active_device_index = 1
+            vol, mute = self.get_system_volume_status()
+            self.current_volume = vol
+            self.last_mute = mute
+            self.restart_peak_monitor()
+            
+        self.update_ui_rendering(force=True)
 
     def font_name_to_path(self, font_name: str) -> str:
         import re
