@@ -973,7 +973,7 @@ class VolumeControl(ActionBase):
 
             # Title Text (wrapping and size calculation)
             left_bound = 12 + icon_w + 6
-            right_bound = 188 - 22 - 6
+            right_bound = 168 - 6
             max_width = right_bound - left_bound - 4
 
             if (self._resolved_title_text is not None and
@@ -1058,7 +1058,7 @@ class VolumeControl(ActionBase):
                 icon_to_draw = getattr(self, "_cached_device_switch_img_off", None)
 
             if icon_to_draw is not None:
-                mid_img.paste(icon_to_draw, (int((188 - 22) * RENDER_SCALE), int((16 - 11) * RENDER_SCALE)), icon_to_draw)
+                mid_img.paste(icon_to_draw, (int(168 * RENDER_SCALE), int(28 * RENDER_SCALE)), icon_to_draw)
 
             # Dimmed volume level gradient arc OR blue volume meter (pre-rendered in midground)
             if not is_muted:
