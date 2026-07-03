@@ -1080,92 +1080,96 @@ class VolumeControl(ActionBase):
     def update_device_dropdown(self):
         if not hasattr(self, "pw_device_selector"):
             return
-        settings = self.get_settings() or {}
-        dtype = settings.get("device_type", "sink")
-        
-        self.pw_devices_map = []
-        if dtype == "sink":
-            sinks, _ = self.get_pipewire_devices()
-            for s_id, s_name in sinks:
-                self.pw_devices_map.append((s_id, s_name))
-        else:
-            _, sources = self.get_pipewire_devices()
-            for s_id, s_name in sources:
-                self.pw_devices_map.append((s_id, s_name))
-                
-        self.pw_device_model = Gtk.StringList()
-        for pw_id, display_name in self.pw_devices_map:
-            self.pw_device_model.append(display_name)
-            
-        self.pw_device_selector.set_model(self.pw_device_model)
-        
-        current_pw_id = settings.get("pipewire_device_id")
-        if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map):
-            if self.pw_devices_map:
-                current_pw_id = self.pw_devices_map[0][0]
-                settings["pipewire_device_id"] = current_pw_id
-                settings["pipewire_device_name"] = self.pw_devices_map[0][1]
-                self.set_settings(settings)
-            else:
-                current_pw_id = ""
-                settings["pipewire_device_id"] = ""
-                settings["pipewire_device_name"] = ""
-                self.set_settings(settings)
-            
-        selected_index = 0
-        for idx, (pw_id, display_name) in enumerate(self.pw_devices_map):
-            if pw_id == current_pw_id:
-                selected_index = idx
-                break
-                
         self._updating_dropdown = True
-        self.pw_device_selector.set_selected(selected_index)
-        self._updating_dropdown = False
+        try:
+            settings = self.get_settings() or {}
+            dtype = settings.get("device_type", "sink")
+            
+            self.pw_devices_map = []
+            if dtype == "sink":
+                sinks, _ = self.get_pipewire_devices()
+                for s_id, s_name in sinks:
+                    self.pw_devices_map.append((s_id, s_name))
+            else:
+                _, sources = self.get_pipewire_devices()
+                for s_id, s_name in sources:
+                    self.pw_devices_map.append((s_id, s_name))
+                    
+            self.pw_device_model = Gtk.StringList()
+            for pw_id, display_name in self.pw_devices_map:
+                self.pw_device_model.append(display_name)
+                
+            self.pw_device_selector.set_model(self.pw_device_model)
+            
+            current_pw_id = settings.get("pipewire_device_id")
+            if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map):
+                if self.pw_devices_map:
+                    current_pw_id = self.pw_devices_map[0][0]
+                    settings["pipewire_device_id"] = current_pw_id
+                    settings["pipewire_device_name"] = self.pw_devices_map[0][1]
+                    self.set_settings(settings)
+                else:
+                    current_pw_id = ""
+                    settings["pipewire_device_id"] = ""
+                    settings["pipewire_device_name"] = ""
+                    self.set_settings(settings)
+                
+            selected_index = 0
+            for idx, (pw_id, display_name) in enumerate(self.pw_devices_map):
+                if pw_id == current_pw_id:
+                    selected_index = idx
+                    break
+                    
+            self.pw_device_selector.set_selected(selected_index)
+        finally:
+            self._updating_dropdown = False
 
     def update_device_dropdown_2(self):
         if not hasattr(self, "pw_device_selector_2"):
             return
-        settings = self.get_settings() or {}
-        dtype_2 = settings.get("device_type_2", "sink")
-        
-        self.pw_devices_map_2 = []
-        if dtype_2 == "sink":
-            sinks, _ = self.get_pipewire_devices()
-            for s_id, s_name in sinks:
-                self.pw_devices_map_2.append((s_id, s_name))
-        else:
-            _, sources = self.get_pipewire_devices()
-            for s_id, s_name in sources:
-                self.pw_devices_map_2.append((s_id, s_name))
-                
-        self.pw_device_model_2 = Gtk.StringList()
-        for pw_id, display_name in self.pw_devices_map_2:
-            self.pw_device_model_2.append(display_name)
-            
-        self.pw_device_selector_2.set_model(self.pw_device_model_2)
-        
-        current_pw_id = settings.get("pipewire_device_id_2")
-        if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map_2):
-            if self.pw_devices_map_2:
-                current_pw_id = self.pw_devices_map_2[0][0]
-                settings["pipewire_device_id_2"] = current_pw_id
-                settings["pipewire_device_name_2"] = self.pw_devices_map_2[0][1]
-                self.set_settings(settings)
-            else:
-                current_pw_id = ""
-                settings["pipewire_device_id_2"] = ""
-                settings["pipewire_device_name_2"] = ""
-                self.set_settings(settings)
-            
-        selected_index = 0
-        for idx, (pw_id, display_name) in enumerate(self.pw_devices_map_2):
-            if pw_id == current_pw_id:
-                selected_index = idx
-                break
-                
         self._updating_dropdown_2 = True
-        self.pw_device_selector_2.set_selected(selected_index)
-        self._updating_dropdown_2 = False
+        try:
+            settings = self.get_settings() or {}
+            dtype_2 = settings.get("device_type_2", "sink")
+            
+            self.pw_devices_map_2 = []
+            if dtype_2 == "sink":
+                sinks, _ = self.get_pipewire_devices()
+                for s_id, s_name in sinks:
+                    self.pw_devices_map_2.append((s_id, s_name))
+            else:
+                _, sources = self.get_pipewire_devices()
+                for s_id, s_name in sources:
+                    self.pw_devices_map_2.append((s_id, s_name))
+                    
+            self.pw_device_model_2 = Gtk.StringList()
+            for pw_id, display_name in self.pw_devices_map_2:
+                self.pw_device_model_2.append(display_name)
+                
+            self.pw_device_selector_2.set_model(self.pw_device_model_2)
+            
+            current_pw_id = settings.get("pipewire_device_id_2")
+            if not current_pw_id or not any(pw_id == current_pw_id for pw_id, _ in self.pw_devices_map_2):
+                if self.pw_devices_map_2:
+                    current_pw_id = self.pw_devices_map_2[0][0]
+                    settings["pipewire_device_id_2"] = current_pw_id
+                    settings["pipewire_device_name_2"] = self.pw_devices_map_2[0][1]
+                    self.set_settings(settings)
+                else:
+                    current_pw_id = ""
+                    settings["pipewire_device_id_2"] = ""
+                    settings["pipewire_device_name_2"] = ""
+                    self.set_settings(settings)
+                
+            selected_index = 0
+            for idx, (pw_id, display_name) in enumerate(self.pw_devices_map_2):
+                if pw_id == current_pw_id:
+                    selected_index = idx
+                    break
+                    
+            self.pw_device_selector_2.set_selected(selected_index)
+        finally:
+            self._updating_dropdown_2 = False
 
     def update_visibility(self, active: bool):
         if hasattr(self, "type_selector_2"):
