@@ -981,7 +981,7 @@ class VolumeControl(ActionBase):
 
             # Title Text (wrapping and size calculation)
             left_bound = 12 + icon_w + 6
-            right_bound = 168 - 6
+            right_bound = 195
             max_width = right_bound - left_bound - 4
 
             if (self._resolved_title_text is not None and
