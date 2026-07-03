@@ -1287,7 +1287,9 @@ class VolumeControl(ActionBase):
         self.type_selector.set_selected(0 if dtype == "sink" else 1)
 
         # 3. PipeWire Device Selector ComboRow
+        self.pw_device_model = Gtk.StringList()
         self.pw_device_selector = Adw.ComboRow(
+            model=self.pw_device_model,
             title="PipeWire Device"
         )
         
@@ -1313,7 +1315,9 @@ class VolumeControl(ActionBase):
         self.type_selector_2.set_selected(0 if dtype_2 == "sink" else 1)
 
         # 3d. PipeWire Device 2 Selector ComboRow
+        self.pw_device_model_2 = Gtk.StringList()
         self.pw_device_selector_2 = Adw.ComboRow(
+            model=self.pw_device_model_2,
             title="PipeWire Device 2"
         )
         self.update_device_dropdown_2()
