@@ -540,24 +540,53 @@ class VolumeControl(ActionBase):
     def get_pipewire_devices(self) -> "tuple[list, list]":
         sinks = []
         sources = []
+        
+        # Try pulsectl first (native Python binding, extremely robust and locale-independent)
         try:
-            sinks_out = self.run_cmd(["pactl", "list", "sinks"])
-            sinks = self.parse_pactl_list(sinks_out)
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus") as pulse:
+                for s in pulse.sink_list():
+                    sinks.append((s.name, s.description))
+                for s in pulse.source_list():
+                    if not s.name.endswith(".monitor"):
+                        sources.append((s.name, s.description))
         except Exception:
             pass
-        try:
-            sources_out = self.run_cmd(["pactl", "list", "sources"])
-            sources = self.parse_pactl_list(sources_out)
-            # Filter out monitors (which are internal loopbacks of outputs)
-            sources = [(n, d) for n, d in sources if not n.endswith(".monitor")]
-        except Exception:
-            pass
+            
+        # Fallback to pactl if pulsectl is not available or fails
+        if not sinks and not sources:
+            try:
+                sinks_out = self.run_cmd(["pactl", "list", "sinks"])
+                sinks = self.parse_pactl_list(sinks_out)
+            except Exception:
+                pass
+            try:
+                sources_out = self.run_cmd(["pactl", "list", "sources"])
+                sources = self.parse_pactl_list(sources_out)
+                sources = [(n, d) for n, d in sources if not n.endswith(".monitor")]
+            except Exception:
+                pass
+                
         return sinks, sources
 
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
         dtype = self.get_active_device_type()
-        cmd_type = "sink" if dtype == "sink" else "source"
         
+        # Try pulsectl first
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-status") as pulse:
+                devs = pulse.sink_list() if dtype == "sink" else pulse.source_list()
+                for d in devs:
+                    if d.name == device_id:
+                        vol = int(round(pulse.volume_get_all_chans(d) * 100))
+                        mute = bool(d.mute)
+                        return vol, mute
+        except Exception:
+            pass
+            
+        # Fallback to pactl
+        cmd_type = "sink" if dtype == "sink" else "source"
         volume = self.current_volume
         mute = self.last_mute
         
@@ -586,6 +615,20 @@ class VolumeControl(ActionBase):
 
     def change_pipewire_volume(self, device_id: str, target_vol: int) -> None:
         dtype = self.get_active_device_type()
+        
+        # Try pulsectl first
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-volume") as pulse:
+                devs = pulse.sink_list() if dtype == "sink" else pulse.source_list()
+                for d in devs:
+                    if d.name == device_id:
+                        pulse.volume_set_all_chans(d, target_vol / 100.0)
+                        return
+        except Exception:
+            pass
+            
+        # Fallback to pactl
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
             self.execute_cmd(["pactl", f"set-{cmd_type}-volume", device_id, f"{target_vol}%"])
@@ -603,6 +646,20 @@ class VolumeControl(ActionBase):
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
         dtype = self.get_active_device_type()
+        
+        # Try pulsectl first
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-mute") as pulse:
+                devs = pulse.sink_list() if dtype == "sink" else pulse.source_list()
+                for d in devs:
+                    if d.name == device_id:
+                        pulse.mute(d, not d.mute)
+                        return
+        except Exception:
+            pass
+            
+        # Fallback to pactl
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
             self.execute_cmd(["pactl", f"set-{cmd_type}-mute", device_id, "toggle"])
