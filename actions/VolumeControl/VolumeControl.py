@@ -917,24 +917,32 @@ class VolumeControl(ActionBase):
                     loaded_img = self.load_icon_image(custom_icon_path)
                     if loaded_img is not None:
                         loaded_img = loaded_img.convert("RGBA")
+                        orig_w, orig_h = loaded_img.size
                         base_size = 14
                         scaled_size = max(4, min(int(base_size * icon_scale), 28))
-                        self._cached_icon_img = loaded_img.resize((scaled_size * RENDER_SCALE, scaled_size * RENDER_SCALE), Image.Resampling.LANCZOS)
+                        target_max = scaled_size * RENDER_SCALE
+                        if orig_w > orig_h:
+                            new_w = target_max
+                            new_h = max(1, int(orig_h * target_max / orig_w))
+                        else:
+                            new_h = target_max
+                            new_w = max(1, int(orig_w * target_max / orig_h))
+                        self._cached_icon_img = loaded_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     else:
                         self._cached_icon_img = None
                     self._cached_icon_path = custom_icon_path
                     
                 if self._cached_icon_img is not None:
                     icon_img = self._cached_icon_img.copy()
-                    scaled_size = icon_img.width
-                    scaled_size_unscaled = scaled_size // RENDER_SCALE
+                    icon_w_unscaled = icon_img.width // RENDER_SCALE
+                    icon_h_unscaled = icon_img.height // RENDER_SCALE
                     x_start = 12
-                    y_start = 16 - scaled_size_unscaled // 2
-                    y_start = max(6, min(y_start, 38 - scaled_size_unscaled))
+                    y_start = 16 - icon_h_unscaled // 2
+                    y_start = max(6, min(y_start, 38 - icon_h_unscaled))
                     mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
                     
                     icon_drawn = True
-                    icon_w = scaled_size_unscaled
+                    icon_w = icon_w_unscaled
 
             if not icon_drawn:
                 spk_x, spk_y = 12, 9
