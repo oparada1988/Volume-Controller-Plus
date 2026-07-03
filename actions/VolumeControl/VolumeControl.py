@@ -163,6 +163,7 @@ class VolumeControl(ActionBase):
         self.last_drawn_peak = -1.0
         self.last_drawn_hold = -1.0
         self._gauge_gradient_img = None
+        self._gauge_gradient_img_sub = None
         self._render_lock = threading.RLock()
         
         # Cached resources for performance
@@ -182,8 +183,18 @@ class VolumeControl(ActionBase):
         self._is_polling = False
 
         # Reusable draw masks & title layout cache for peak performance
-        self._peak_mask = Image.new("L", (200 * RENDER_SCALE, 100 * RENDER_SCALE), 0)
-        self._peak_mask_draw = ImageDraw.Draw(self._peak_mask)
+        cx = 70 * RENDER_SCALE
+        cy = 94 * RENDER_SCALE
+        r_arc = 46 * RENDER_SCALE
+        self._gx1 = cx - r_arc
+        self._gy1 = cy - r_arc
+        self._gx2 = cx + r_arc
+        self._gy2 = cy
+        self._sub_width = self._gx2 - self._gx1
+        self._sub_height = self._gy2 - self._gy1
+        self._peak_mask_sub = Image.new("L", (self._sub_width, self._sub_height), 0)
+        self._peak_mask_sub_draw = ImageDraw.Draw(self._peak_mask_sub)
+        self._sub_bbox = [(0, 0), (self._sub_width, self._sub_width)]
         self._last_title_text = None
         self._last_font_file = None
         self._last_font_name = None
@@ -639,6 +650,15 @@ class VolumeControl(ActionBase):
             self._gauge_gradient_img = grad_img
             return self._gauge_gradient_img
 
+    def _get_gauge_gradient_image_sub(self, width: int, height: int, bbox: list) -> Image.Image:
+        with self._render_lock:
+            if self._gauge_gradient_img_sub is not None:
+                return self._gauge_gradient_img_sub
+            
+            grad_img = self._get_gauge_gradient_image(width, height, bbox)
+            self._gauge_gradient_img_sub = grad_img.crop((self._gx1, self._gy1, self._gx2, self._gy2))
+            return self._gauge_gradient_img_sub
+
     def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
         width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE
         
@@ -1006,8 +1026,6 @@ class VolumeControl(ActionBase):
         if not is_muted:
             is_live_enabled = settings.get("live_meter", True)
             if is_live_enabled:
-                grad_img = self._get_gauge_gradient_image(width, height, bbox)
-                
                 # Bouncing audio peak arc
                 if peak > 0.04:
                     scaled_peak = peak * (volume / 100.0)
@@ -1017,10 +1035,11 @@ class VolumeControl(ActionBase):
                             # Make the active meter solid red when it reaches 100% peak
                             draw.arc(bbox, start=180, end=min(360, peak_angle), fill=(255, 30, 30, 255), width=7 * RENDER_SCALE)
                         else:
-                            # Reuse the pre-allocated peak mask to avoid heavy object instantiation
-                            self._peak_mask_draw.rectangle([(0, 0), (width, height)], fill=0)
-                            self._peak_mask_draw.arc(bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
-                            img.paste(grad_img, (0, 0), self._peak_mask)
+                            # Reuse the pre-allocated sub-mask to avoid heavy object instantiation
+                            self._peak_mask_sub_draw.rectangle([(0, 0), (self._sub_width, self._sub_height)], fill=0)
+                            self._peak_mask_sub_draw.arc(self._sub_bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
+                            grad_img_sub = self._get_gauge_gradient_image_sub(width, height, bbox)
+                            img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
 
                 # Peak Hold marker (Floating bright indicator for studio console aesthetics)
                 if self._peak_hold_val > 0.04:
