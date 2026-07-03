@@ -1162,6 +1162,11 @@ class VolumeControl(ActionBase):
                 self.custom_name_row.set_title("Device Name 1")
             else:
                 self.custom_name_row.set_title("Device Name")
+        if hasattr(self, "icon_row"):
+            if active:
+                self.icon_row.set_title("Device Icon 1")
+            else:
+                self.icon_row.set_title("Device Icon")
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         settings = self.get_settings() or {}
@@ -1247,7 +1252,7 @@ class VolumeControl(ActionBase):
 
         # 6. Custom Icon selection
         self.icon_row = Adw.ActionRow(
-            title="Custom Icon"
+            title="Device Icon"
         )
         
         self.choose_icon_button = Gtk.Button.new_from_icon_name("document-open-symbolic")
@@ -1263,7 +1268,7 @@ class VolumeControl(ActionBase):
 
         # 6b. Custom Icon 2 selection
         self.icon_row_2 = Adw.ActionRow(
-            title="Custom Icon 2"
+            title="Device Icon 2"
         )
         
         self.choose_icon_button_2 = Gtk.Button.new_from_icon_name("document-open-symbolic")
