@@ -507,13 +507,17 @@ class VolumeControl(ActionBase):
 
     def run_cmd(self, cmd: list) -> str:
         try:
-            return subprocess.check_output(cmd, text=True)
+            env = os.environ.copy()
+            env["LC_ALL"] = "C"
+            return subprocess.check_output(cmd, text=True, env=env)
         except Exception:
             return ""
 
     def execute_cmd(self, cmd: list) -> None:
         try:
-            subprocess.run(cmd, check=True)
+            env = os.environ.copy()
+            env["LC_ALL"] = "C"
+            subprocess.run(cmd, check=True, env=env)
         except Exception:
             pass
 
