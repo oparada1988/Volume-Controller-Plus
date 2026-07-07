@@ -209,6 +209,10 @@ class VolumeControl(ActionBase):
         self._event_proc = None
 
     def on_ready(self) -> None:
+        if getattr(self, "_on_ready_run", False):
+            self.update_ui_rendering()
+            return
+        self._on_ready_run = True
         self.running = True
         
         # Load initial status once (in a background thread to avoid GTK block)
@@ -221,6 +225,9 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         if settings.get("live_meter", True):
             self.tick_timer_id = GLib.timeout_add(25, self.on_tick_update)
+
+    def on_update(self) -> None:
+        self.update_ui_rendering()
 
     def _start_event_listener(self):
         threading.Thread(target=self._listen_for_volume_events, daemon=True).start()
@@ -495,6 +502,10 @@ class VolumeControl(ActionBase):
 
     def update_ui_rendering(self, peak: float = 0.0, force: bool = False):
         if not force and not self.get_is_present():
+            return
+            
+        state = self.get_state()
+        if state is None or state.state != self.state:
             return
         
         with self._render_lock:
