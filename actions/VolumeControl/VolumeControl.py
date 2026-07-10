@@ -206,6 +206,7 @@ class VolumeControl(ActionBase):
         self._peak_hold_val = 0.0
         self._peak_hold_ticks = 0
         self.poll_timer_id = 0
+        self.presence_timer_id = 0
         self._event_proc = None
 
     def on_ready(self) -> None:
@@ -226,44 +227,70 @@ class VolumeControl(ActionBase):
         if settings.get("live_meter", True):
             self.tick_timer_id = GLib.timeout_add(25, self.on_tick_update)
 
+        # Start GLib presence check timer to sync UI when action becomes visible (every 500ms)
+        self.presence_timer_id = GLib.timeout_add(500, self.on_presence_check)
+
     def on_update(self) -> None:
         self.update_ui_rendering()
+
+    def on_presence_check(self) -> bool:
+        if not self.running:
+            return False
+        if self.get_is_present():
+            if (self.current_volume != self.last_drawn_volume or 
+                self.last_mute != self.last_drawn_mute):
+                self.update_ui_rendering()
+        return True
 
     def _start_event_listener(self):
         threading.Thread(target=self._listen_for_volume_events, daemon=True).start()
 
     def _listen_for_volume_events(self):
-        use_fallback_polling = True
-        try:
-            proc = subprocess.Popen(
-                ["pactl", "subscribe"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True
-            )
-            self._event_proc = proc
-            use_fallback_polling = False
-        except Exception:
-            pass
+        retry_count = 0
+        max_retries = 10
+        
+        while self.running:
+            proc = None
+            try:
+                proc = subprocess.Popen(
+                    ["pactl", "subscribe"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True
+                )
+                self._event_proc = proc
+                retry_count = 0  # Reset on successful launch
+                
+                # Keep reading lines from pactl subscribe
+                while self.running and proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    if "change" in line and ("sink" in line or "source" in line):
+                        # Trigger a non-blocking read of the volume status
+                        if not self._is_polling:
+                            self._is_polling = True
+                            threading.Thread(target=self._poll_system_volume_bg, daemon=True).start()
+                
+                if proc.poll() is None:
+                    proc.kill()
+            except Exception:
+                if proc and proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
 
-        if use_fallback_polling:
-            # Fall back to periodic polling timer
-            GLib.idle_add(self._start_fallback_polling)
-            return
-
-        # Keep reading lines from pactl subscribe
-        while self.running and proc.poll() is None:
-            line = proc.stdout.readline()
-            if not line:
+            if not self.running:
                 break
-            if "change" in line and ("sink" in line or "source" in line):
-                # Trigger a non-blocking read of the volume status
-                if not self._is_polling:
-                    self._is_polling = True
-                    threading.Thread(target=self._poll_system_volume_bg, daemon=True).start()
 
-        if proc.poll() is None:
-            proc.kill()
+            retry_count += 1
+            if retry_count > max_retries:
+                # Fall back to periodic polling timer
+                GLib.idle_add(self._start_fallback_polling)
+                break
+
+            time.sleep(min(5.0, retry_count * 0.5))
 
     def _start_fallback_polling(self):
         if not self.poll_timer_id and self.running:
@@ -278,6 +305,19 @@ class VolumeControl(ActionBase):
         return True
 
     def _initial_load_status(self):
+        # Retry loading PipeWire devices on startup if sound system is not ready yet
+        sinks, sources = [], []
+        retries = 10
+        while retries > 0 and self.running:
+            try:
+                sinks, sources = self.get_pipewire_devices()
+                if sinks or sources:
+                    break
+            except Exception:
+                pass
+            retries -= 1
+            time.sleep(1.0)
+
         settings = self.get_settings() or {}
         updated = False
         if not settings.get("device_type"):
@@ -285,7 +325,6 @@ class VolumeControl(ActionBase):
             updated = True
             
         dtype = settings.get("device_type", "sink")
-        sinks, sources = self.get_pipewire_devices()
         devices = sinks if dtype == "sink" else sources
         
         if not settings.get("pipewire_device_id") and devices:
@@ -311,9 +350,22 @@ class VolumeControl(ActionBase):
         if updated:
             self.set_settings(settings)
             
-        vol, mute = self.get_system_volume_status()
+        # Retry system volume status check if it initially returns default/fails
+        vol, mute = 50, False
+        retries = 5
+        while retries > 0 and self.running:
+            try:
+                vol, mute = self.get_system_volume_status()
+                break
+            except Exception:
+                pass
+            retries -= 1
+            time.sleep(0.5)
+
         self.current_volume = vol
         self.last_mute = mute
+        
+        # Trigger initial rendering (presence check timer will catch it once active)
         self.update_ui_rendering()
         if settings.get("live_meter", True):
             self.restart_peak_monitor()
@@ -326,6 +378,9 @@ class VolumeControl(ActionBase):
         if self.poll_timer_id:
             GLib.source_remove(self.poll_timer_id)
             self.poll_timer_id = 0
+        if getattr(self, "presence_timer_id", 0):
+            GLib.source_remove(self.presence_timer_id)
+            self.presence_timer_id = 0
         if self._event_proc:
             try:
                 self._event_proc.kill()
@@ -342,6 +397,9 @@ class VolumeControl(ActionBase):
         if self.poll_timer_id:
             GLib.source_remove(self.poll_timer_id)
             self.poll_timer_id = 0
+        if getattr(self, "presence_timer_id", 0):
+            GLib.source_remove(self.presence_timer_id)
+            self.presence_timer_id = 0
         if self._event_proc:
             try:
                 self._event_proc.kill()
