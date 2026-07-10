@@ -1,0 +1,44 @@
+name: Update Store Manifest
+    
+    on:
+      push:
+        branches:
+          - main
+    
+    jobs:
+      update-store:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Get latest commit hash
+            run: echo "COMMIT_HASH=${{ github.sha }}" >> $GITHUB_ENV
+    
+          - name: Checkout Store Repository
+            uses: actions/checkout@v4
+            with:
+              repository: oparada1988/StreamController-Store
+              token: ${{ secrets.STORE_ACCESS_TOKEN }}
+              path: store
+    
+          - name: Update Plugins.json
+            run: |
+              cd store
+              # Use python to safely update the JSON file in-place
+              python3 -c "
+              import json
+              with open('Plugins.json', 'r') as f:
+                  data = json.load(f)
+              for plugin in data:
+                  if 'Volume-Controller-Plus' in plugin['url']:
+                      plugin['commits']['1.0.0'] = '${{ env.COMMIT_HASH }}'
+              with open('Plugins.json', 'w') as f:
+                  json.dump(data, f, indent=2)
+              "          
+    
+          - name: Commit and Push Changes
+            run: |
+              cd store
+              git config --global user.name "github-actions[bot]"
+              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add Plugins.json
+              git commit -m "Auto-update Volume-Controller-Plus to commit ${{ env.COMMIT_HASH }}" || exit 0
+              git push          
