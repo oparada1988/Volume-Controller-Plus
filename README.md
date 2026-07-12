@@ -14,3 +14,6 @@ Volume Control plugin inspired by the official Elgato Volumen Mixer plugin. Mimi
 
 ## Privacy & Desktop Indicators
 * **GNOME Microphone Icon Bypass**: The Live Peak Meter measures playback audio levels in real-time by starting a background `parecord` helper stream. To prevent GNOME Shell from displaying a persistent orange recording indicator (microphone icon) on your desktop panel, the stream's application ID is spoofed as `org.PulseAudio.pavucontrol`. Since this ID is on GNOME's hardcoded recording exclusion list, the Live Peak Meter can run cleanly without triggering system-wide privacy notifications.
+
+---
+Notice: Plugin was written/updated with assistance of Google Antigravity
