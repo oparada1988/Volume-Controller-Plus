@@ -29,22 +29,20 @@ jobs:
           ")
           echo "Current version: $VERSION"
           
-          # Increment logic: Z goes up by 1 (1.0.1 -> 1.0.10), then jumps to 10.1.0
+          # Increment logic: Z goes up to 10. Rollover: X.Y.10 -> X.(Y+1).0, and X.9.10 -> (X+1).0.0
           NEW_VERSION=$(python3 -c "
           ver = '$VERSION'
           try:
               parts = [int(p) for p in ver.split('.')]
               if len(parts) == 3:
                   x, y, z = parts
-                  if x == 10 and y == 1 and z == 0:
-                      new_ver = '10.1.0'
-                  elif x == 1 and y == 0:
-                      if z < 10:
-                          new_ver = f'1.0.{z+1}'
-                      else:
-                          new_ver = '10.1.0'
+                  if z < 10:
+                      new_ver = f'{x}.{y}.{z+1}'
                   else:
-                      new_ver = ver
+                      if y < 9:
+                          new_ver = f'{x}.{y+1}.0'
+                      else:
+                          new_ver = f'{x+1}.0.0'
               else:
                   new_ver = '1.0.1'
           except Exception:
