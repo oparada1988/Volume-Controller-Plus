@@ -325,11 +325,10 @@ class VolumeControl(ActionBase):
             updated = True
             
         dtype = settings.get("device_type", "sink")
-        devices = sinks if dtype == "sink" else sources
         
-        if not settings.get("pipewire_device_id") and devices:
-            settings["pipewire_device_id"] = devices[0][0]
-            settings["pipewire_device_name"] = devices[0][1]
+        if not settings.get("pipewire_device_id"):
+            settings["pipewire_device_id"] = "@DEFAULT_SINK@" if dtype == "sink" else "@DEFAULT_SOURCE@"
+            settings["pipewire_device_name"] = "System Default Audio Output" if dtype == "sink" else "System Default Mic"
             updated = True
 
         if not settings.get("device_type_2"):
@@ -337,14 +336,9 @@ class VolumeControl(ActionBase):
             updated = True
             
         dtype_2 = settings.get("device_type_2", "sink")
-        devices_2 = sinks if dtype_2 == "sink" else sources
-        if not settings.get("pipewire_device_id_2") and devices_2:
-            primary_id = settings.get("pipewire_device_id")
-            selected_dev = devices_2[0]
-            if len(devices_2) > 1 and selected_dev[0] == primary_id:
-                selected_dev = devices_2[1]
-            settings["pipewire_device_id_2"] = selected_dev[0]
-            settings["pipewire_device_name_2"] = selected_dev[1]
+        if not settings.get("pipewire_device_id_2"):
+            settings["pipewire_device_id_2"] = "@DEFAULT_SINK@" if dtype_2 == "sink" else "@DEFAULT_SOURCE@"
+            settings["pipewire_device_name_2"] = "System Default Audio Output" if dtype_2 == "sink" else "System Default Mic"
             updated = True
             
         if updated:
@@ -478,6 +472,51 @@ class VolumeControl(ActionBase):
             return settings.get("live_meter", True)
         return True
 
+    def resolve_device_id(self, device_id: str) -> str:
+        if device_id not in ["@DEFAULT_SINK@", "@DEFAULT_SOURCE@"]:
+            return device_id
+        
+        # 1. Try pulsectl first (native Python binding)
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-resolver") as pulse:
+                if device_id == "@DEFAULT_SINK@":
+                    return pulse.server_info().default_sink_name
+                elif device_id == "@DEFAULT_SOURCE@":
+                    return pulse.server_info().default_source_name
+        except Exception:
+            pass
+            
+        # 2. Try wpctl fallback (available on GNOME and KDE with PipeWire)
+        try:
+            import subprocess
+            out = subprocess.check_output(["wpctl", "status"], text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                if "Audio/Sink" in line and device_id == "@DEFAULT_SINK@":
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        return parts[-1]
+                elif "Audio/Source" in line and device_id == "@DEFAULT_SOURCE@":
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        return parts[-1]
+        except Exception:
+            pass
+            
+        # 3. Try pactl fallback (standard PulseAudio CLI)
+        try:
+            import subprocess
+            out = subprocess.check_output(["pactl", "info"], text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                if "Default Sink:" in line and device_id == "@DEFAULT_SINK@":
+                    return line.split(":", 1)[1].strip()
+                elif "Default Source:" in line and device_id == "@DEFAULT_SOURCE@":
+                    return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+            
+        return device_id
+
     def get_configured_device_id(self) -> str:
         settings = self.get_settings() or {}
         active = getattr(self, "active_device_index", 1)
@@ -491,10 +530,13 @@ class VolumeControl(ActionBase):
             dev_id = settings.get("pipewire_device_id", default_id)
             
         if dev_id in ["@DEFAULT_AUDIO_SINK@", "@DEFAULT_SINK@"]:
-            return "@DEFAULT_SINK@"
+            target_id = "@DEFAULT_SINK@"
         elif dev_id in ["@DEFAULT_AUDIO_SOURCE@", "@DEFAULT_SOURCE@"]:
-            return "@DEFAULT_SOURCE@"
-        return dev_id
+            target_id = "@DEFAULT_SOURCE@"
+        else:
+            target_id = dev_id
+            
+        return self.resolve_device_id(target_id)
 
     def restart_peak_monitor(self):
         device_id = self.get_configured_device_id()
@@ -1224,6 +1266,12 @@ class VolumeControl(ActionBase):
             dtype = settings.get("device_type", "sink")
             
             self.pw_devices_map = []
+            
+            # Add System Default option at index 0
+            default_id = "@DEFAULT_SINK@" if dtype == "sink" else "@DEFAULT_SOURCE@"
+            default_name = "System Default Audio Output" if dtype == "sink" else "System Default Mic"
+            self.pw_devices_map.append((default_id, default_name))
+            
             if dtype == "sink":
                 sinks, _ = self.get_pipewire_devices()
                 for s_id, s_name in sinks:
@@ -1271,6 +1319,12 @@ class VolumeControl(ActionBase):
             dtype_2 = settings.get("device_type_2", "sink")
             
             self.pw_devices_map_2 = []
+            
+            # Add System Default option at index 0
+            default_id = "@DEFAULT_SINK@" if dtype_2 == "sink" else "@DEFAULT_SOURCE@"
+            default_name = "System Default Audio Output" if dtype_2 == "sink" else "System Default Mic"
+            self.pw_devices_map_2.append((default_id, default_name))
+            
             if dtype_2 == "sink":
                 sinks, _ = self.get_pipewire_devices()
                 for s_id, s_name in sinks:
@@ -1530,15 +1584,9 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         settings["device_type"] = new_type
         
-        # Select first available device for the new type
-        sinks, sources = self.get_pipewire_devices()
-        devices = sinks if new_type == "sink" else sources
-        if devices:
-            settings["pipewire_device_id"] = devices[0][0]
-            settings["pipewire_device_name"] = devices[0][1]
-        else:
-            settings["pipewire_device_id"] = ""
-            settings["pipewire_device_name"] = ""
+        # Select System Default for the new type
+        settings["pipewire_device_id"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
+        settings["pipewire_device_name"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
         self.set_settings(settings)
         
         # Rebuild the Device Selection dropdown items
@@ -1556,14 +1604,8 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         settings["device_type_2"] = new_type
         
-        sinks, sources = self.get_pipewire_devices()
-        devices = sinks if new_type == "sink" else sources
-        if devices:
-            settings["pipewire_device_id_2"] = devices[0][0]
-            settings["pipewire_device_name_2"] = devices[0][1]
-        else:
-            settings["pipewire_device_id_2"] = ""
-            settings["pipewire_device_name_2"] = ""
+        settings["pipewire_device_id_2"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
+        settings["pipewire_device_name_2"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
         self.set_settings(settings)
         
         self.update_device_dropdown_2()
