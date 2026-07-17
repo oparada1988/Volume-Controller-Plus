@@ -23,6 +23,7 @@ class PluginTemplate(PluginBase):
             action_base = VolumeControl,
             action_id = "com_oparada_VolumeControllerPlus::VolumeControl",
             action_name = "Volume Controller Plus",
+            icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "Action_icon.png")),
             action_support = {
                 Input.Key: ActionInputSupport.UNSUPPORTED,
                 Input.Dial: ActionInputSupport.SUPPORTED,
