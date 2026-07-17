@@ -5,12 +5,87 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   update-store:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
     steps:
-      - name: Get latest commit hash
-        run: echo "COMMIT_HASH=${{ github.sha }}" >> $GITHUB_ENV
+      - name: Checkout Plugin Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate and Update Version
+        id: bump_version
+        run: |
+          # Read current version from manifest.json
+          VERSION=$(python3 -c "
+          import json
+          with open('manifest.json') as f:
+              print(json.load(f)['version'])
+          ")
+          echo "Current version: $VERSION"
+          
+          # Increment logic: Z goes up by 1 (1.0.1 -> 1.0.10), then jumps to 10.1.0
+          NEW_VERSION=$(python3 -c "
+          ver = '$VERSION'
+          try:
+              parts = [int(p) for p in ver.split('.')]
+              if len(parts) == 3:
+                  x, y, z = parts
+                  if x == 10 and y == 1 and z == 0:
+                      new_ver = '10.1.0'
+                  elif x == 1 and y == 0:
+                      if z < 10:
+                          new_ver = f'1.0.{z+1}'
+                      else:
+                          new_ver = '10.1.0'
+                  else:
+                      new_ver = ver
+              else:
+                  new_ver = '1.0.1'
+          except Exception:
+              new_ver = '1.0.1'
+          print(new_ver)
+          ")
+          echo "New version: $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          
+          # If version actually changed, update manifest.json and main.py
+          if [ "$VERSION" != "$NEW_VERSION" ]; then
+            # Update manifest.json
+            python3 -c "
+            import json
+            with open('manifest.json', 'r') as f:
+                data = json.load(f)
+            data['version'] = '$NEW_VERSION'
+            with open('manifest.json', 'w') as f:
+                json.dump(data, f, indent=4)
+            "
+            
+            # Update main.py
+            python3 -c "
+            import re
+            with open('main.py', 'r') as f:
+                content = f.read()
+            content = re.sub(r'plugin_version\s*=\s*[\"\'\'][^\'\'\"]+[\"\'\']', 'plugin_version = \"$NEW_VERSION\"', content)
+            with open('main.py', 'w') as f:
+                f.write(content)
+            "
+            
+            # Configure git and commit changes
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add manifest.json main.py
+            git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
+            git push
+          fi
+          
+          # Set the final commit hash in env
+          echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
       - name: Checkout Store Repository
         uses: actions/checkout@v4
@@ -19,7 +94,7 @@ jobs:
           token: ${{ secrets.STORE_ACCESS_TOKEN }}
           path: store
 
-      - name: Update Plugins.json
+      - name: Update Plugins.json in Store
         run: |
           cd store
           # Use python to safely update the JSON file in-place
@@ -29,16 +104,18 @@ jobs:
               data = json.load(f)
           for plugin in data:
               if 'Volume-Controller-Plus' in plugin['url']:
-                  plugin['commits']['1.0.0'] = '${{ env.COMMIT_HASH }}'
+                  if 'commits' not in plugin:
+                      plugin['commits'] = {}
+                  plugin['commits']['${{ env.NEW_VERSION }}'] = '${{ env.COMMIT_HASH }}'
           with open('Plugins.json', 'w') as f:
               json.dump(data, f, indent=2)
           "          
 
-      - name: Commit and Push Changes
+      - name: Commit and Push Changes to Store
         run: |
           cd store
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Plugins.json
-          git commit -m "Auto-update Volume-Controller-Plus to commit ${{ env.COMMIT_HASH }}" || exit 0
-          git push          
+          git commit -m "Auto-update Volume-Controller-Plus to version ${{ env.NEW_VERSION }} (commit ${{ env.COMMIT_HASH }})" || exit 0
+          git push
