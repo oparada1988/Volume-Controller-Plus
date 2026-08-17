@@ -67,6 +67,7 @@ jobs:
           found = False
           for plugin in data:
               if 'Volume-Controller-Plus' in plugin.get('url', '') or 'VolumeControllerPlus' in plugin.get('url', ''):
+                  plugin['hash'] = commit_hash
                   if 'commits' not in plugin or not isinstance(plugin['commits'], dict):
                       plugin['commits'] = {}
                   plugin['commits'][new_version] = commit_hash
@@ -76,6 +77,7 @@ jobs:
           if not found:
               data.append({
                   "url": "https://github.com/oparada1988/Volume-Controller-Plus",
+                  "hash": commit_hash,
                   "commits": {
                       new_version: commit_hash
                   }
