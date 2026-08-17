@@ -1,124 +1,123 @@
 name: Update Store Manifest
-    
-    on:
-      push:
-        branches:
-          - main
-    
-    permissions:
-      contents: write
-    
-    jobs:
-      update-store:
-        runs-on: ubuntu-latest
-        if: "github.event.head_commit != null && !contains(github.event.head_commit.message, '[skip ci]')"
-        env:
-          STORE_TOKEN: ${{ secrets.STORE_ACCESS_TOKEN || secrets.STORE_AUTOMATION_TOKEN || secrets.STORE_TOKEN || secrets.GH_PAT || secrets.PERSONAL_ACCESS_TOKEN || secrets.PAT ||
-  secrets.STORE_REPO_TOKEN }}
-        steps:
-          - name: Checkout Plugin Repository
-            uses: actions/checkout@v4
-            with:
-              ref: main
-    
-          - name: Set up Python
-            uses: actions/setup-python@v5
-            with:
-              python-version: '3.10'
-    
-          - name: Validate Python Code
-            run: |
-              python3 -m compileall -q .
-    
-          - name: Read Version and Commit Hash
-            id: bump_version
-            run: |
-              NEW_VER=$(python3 -c "import json; print(json.load(open('manifest.json')).get('version', '1.0.4'))")
-              echo "NEW_VERSION=$NEW_VER" >> $GITHUB_ENV
-              echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
-    
-          - name: Check for Store Token Secret
-            id: check_secret
-            run: |
-              if [ -n "$STORE_TOKEN" ]; then
-                echo "HAS_SECRET=true" >> $GITHUB_ENV
-              else
-                echo "HAS_SECRET=false" >> $GITHUB_ENV
-                echo "::warning::Store access secret token is not set in GitHub repository settings. Store repository update skipped."
-              fi
-    
-          - name: Checkout Store Repository
-            if: env.HAS_SECRET == 'true'
-            continue-on-error: true
-            id: checkout_store
-            uses: actions/checkout@v4
-            with:
-              repository: oparada1988/StreamController-Store
-              token: ${{ env.STORE_TOKEN }}
-              path: store
-              ref: main
-    
-          - name: Update Plugins.json in Store
-            if: env.HAS_SECRET == 'true' && steps.checkout_store.outcome == 'success'
-            run: |
-              cd store
-              python3 - << 'EOF'
-              import json, os
-    
-              new_version = os.environ.get('NEW_VERSION')
-              commit_hash = os.environ.get('COMMIT_HASH')
-    
-              with open('Plugins.json', 'r') as f:
-                  data = json.load(f)
-    
-              found = False
-              for plugin in data:
-                  if 'Volume-Controller-Plus' in plugin.get('url', '') or 'VolumeControllerPlus' in plugin.get('url', ''):
-                      if 'commits' not in plugin or not isinstance(plugin['commits'], dict):
-                          plugin['commits'] = {}
-                      plugin['commits'][new_version] = commit_hash
-                      found = True
-                      break
-    
-              if not found:
-                  data.append({
-                      "url": "https://github.com/oparada1988/Volume-Controller-Plus",
-                      "commits": {
-                          new_version: commit_hash
-                      }
-                  })
 
-              with open('Plugins.json', 'w') as f:
-                  json.dump(data, f, indent=2)
-                  f.write('\n')
-              EOF
+on:
+  push:
+    branches:
+      - main
 
-          - name: Commit and Push Changes to Store
-            if: env.HAS_SECRET == 'true' && steps.checkout_store.outcome == 'success'
-            continue-on-error: true
-            run: |
-              cd store
-              git config --global user.name "github-actions[bot]"
-              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git add Plugins.json
-              if ! git diff --staged --quiet; then
-                git commit -m "Auto-update Volume-Controller-Plus to version ${{ env.NEW_VERSION }} (commit ${{ env.COMMIT_HASH }})"
-                git push origin main
-              fi
+permissions:
+  contents: write
 
-          - name: Trigger Store Update (Official Store Dispatch)
-            if: env.HAS_SECRET == 'true'
-            continue-on-error: true
-            run: |
-              curl -X POST \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.STORE_AUTOMATION_TOKEN || env.STORE_TOKEN }}" \
-                https://api.github.com/repos/StreamController/StreamController-Store/dispatches \
-                -d '{
-                  "event_type": "plugin_updated",
-                  "client_payload": {
-                    "repo_url": "https://github.com/${{ github.repository }}",
-                    "version": "${{ env.NEW_VERSION }}",
-                    "commit_sha": "${{ env.COMMIT_HASH }}"
+jobs:
+  update-store:
+    runs-on: ubuntu-latest
+    if: "github.event.head_commit != null && !contains(github.event.head_commit.message, '[skip ci]')"
+    env:
+      STORE_TOKEN: ${{ secrets.STORE_ACCESS_TOKEN || secrets.STORE_AUTOMATION_TOKEN || secrets.STORE_TOKEN || secrets.GH_PAT || secrets.PERSONAL_ACCESS_TOKEN || secrets.PAT || secrets.STORE_REPO_TOKEN }}
+    steps:
+      - name: Checkout Plugin Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Validate Python Code
+        run: |
+          python3 -m compileall -q .
+
+      - name: Read Version and Commit Hash
+        id: bump_version
+        run: |
+          NEW_VER=$(python3 -c "import json; print(json.load(open('manifest.json')).get('version', '1.0.4'))")
+          echo "NEW_VERSION=$NEW_VER" >> $GITHUB_ENV
+          echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Check for Store Token Secret
+        id: check_secret
+        run: |
+          if [ -n "$STORE_TOKEN" ]; then
+            echo "HAS_SECRET=true" >> $GITHUB_ENV
+          else
+            echo "HAS_SECRET=false" >> $GITHUB_ENV
+            echo "::warning::Store access secret token is not set in GitHub repository settings. Store repository update skipped."
+          fi
+
+      - name: Checkout Store Repository
+        if: env.HAS_SECRET == 'true'
+        continue-on-error: true
+        id: checkout_store
+        uses: actions/checkout@v4
+        with:
+          repository: oparada1988/StreamController-Store
+          token: ${{ env.STORE_TOKEN }}
+          path: store
+          ref: main
+
+      - name: Update Plugins.json in Store
+        if: env.HAS_SECRET == 'true' && steps.checkout_store.outcome == 'success'
+        run: |
+          cd store
+          python3 - << 'EOF'
+          import json, os
+
+          new_version = os.environ.get('NEW_VERSION')
+          commit_hash = os.environ.get('COMMIT_HASH')
+
+          with open('Plugins.json', 'r') as f:
+              data = json.load(f)
+
+          found = False
+          for plugin in data:
+              if 'Volume-Controller-Plus' in plugin.get('url', '') or 'VolumeControllerPlus' in plugin.get('url', ''):
+                  if 'commits' not in plugin or not isinstance(plugin['commits'], dict):
+                      plugin['commits'] = {}
+                  plugin['commits'][new_version] = commit_hash
+                  found = True
+                  break
+
+          if not found:
+              data.append({
+                  "url": "https://github.com/oparada1988/Volume-Controller-Plus",
+                  "commits": {
+                      new_version: commit_hash
                   }
-                }' || true
+              })
+
+          with open('Plugins.json', 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          EOF
+
+      - name: Commit and Push Changes to Store
+        if: env.HAS_SECRET == 'true' && steps.checkout_store.outcome == 'success'
+        continue-on-error: true
+        run: |
+          cd store
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Plugins.json
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-update Volume-Controller-Plus to version ${{ env.NEW_VERSION }} (commit ${{ env.COMMIT_HASH }})"
+            git push origin main
+          fi
+
+      - name: Trigger Store Update (Official Store Dispatch)
+        if: env.HAS_SECRET == 'true'
+        continue-on-error: true
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.STORE_AUTOMATION_TOKEN || env.STORE_TOKEN }}" \
+            https://api.github.com/repos/StreamController/StreamController-Store/dispatches \
+            -d '{
+              "event_type": "plugin_updated",
+              "client_payload": {
+                "repo_url": "https://github.com/${{ github.repository }}",
+                "version": "${{ env.NEW_VERSION }}",
+                "commit_sha": "${{ env.COMMIT_HASH }}"
+              }
+            }' || true
