@@ -402,6 +402,9 @@ class VolumeControl(ActionBase):
             self._event_proc = None
         self.peak_monitor.stop()
 
+    def on_removed_from_cache(self) -> None:
+        self.on_remove()
+
     def _raw_event_callback(self, event: InputEvent, data: dict = None):
         if event == Input.Dial.Events.TURN_CW:
             self.change_volume(self.get_step_size())
