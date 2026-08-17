@@ -90,12 +90,12 @@ jobs:
         if: env.HAS_SECRET == 'true'
         run: |
           cd store
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Plugins.json
           if ! git diff --staged --quiet; then
             git commit -m "Auto-update Volume-Controller-Plus to version ${{ env.NEW_VERSION }} (commit ${{ env.COMMIT_HASH }})"
-            git push origin main
+            git push "https://x-access-token:${STORE_TOKEN}@github.com/oparada1988/StreamController-Store.git" main
           fi
 
       - name: Trigger Store Update (Official Store Dispatch)
