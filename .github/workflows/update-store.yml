@@ -46,15 +46,10 @@ jobs:
             echo "::warning::Store access secret token is not set in GitHub repository settings. Store repository update skipped."
           fi
 
-      - name: Checkout Store Repository
+      - name: Clone Store Repository
         if: env.HAS_SECRET == 'true'
-        id: checkout_store
-        uses: actions/checkout@v4
-        with:
-          repository: oparada1988/StreamController-Store
-          token: ${{ env.STORE_TOKEN }}
-          path: store
-          ref: main
+        run: |
+          git clone --depth 1 --branch main "https://x-access-token:${STORE_TOKEN}@github.com/oparada1988/StreamController-Store.git" store
 
       - name: Update Plugins.json in Store
         if: env.HAS_SECRET == 'true'
