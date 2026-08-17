@@ -92,10 +92,11 @@ jobs:
           cd store
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --unset-all http.https://github.com/.extraheader || true
           git add Plugins.json
           if ! git diff --staged --quiet; then
             git commit -m "Auto-update Volume-Controller-Plus to version ${{ env.NEW_VERSION }} (commit ${{ env.COMMIT_HASH }})"
-            git push "https://x-access-token:${STORE_TOKEN}@github.com/oparada1988/StreamController-Store.git" main
+            git -c http.extraheader= push "https://x-access-token:${STORE_TOKEN}@github.com/oparada1988/StreamController-Store.git" main
           fi
 
       - name: Trigger Store Update (Official Store Dispatch)
