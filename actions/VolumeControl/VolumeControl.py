@@ -532,6 +532,9 @@ class VolumeControl(ActionBase):
             default_id = "@DEFAULT_AUDIO_SOURCE@" if dtype == "source" else "@DEFAULT_AUDIO_SINK@"
             dev_id = settings.get("pipewire_device_id", default_id)
             
+        if dtype == "app":
+            return self.resolve_device_id("@DEFAULT_SINK@")
+
         if dev_id in ["@DEFAULT_AUDIO_SINK@", "@DEFAULT_SINK@"]:
             target_id = "@DEFAULT_SINK@"
         elif dev_id in ["@DEFAULT_AUDIO_SOURCE@", "@DEFAULT_SOURCE@"]:
@@ -683,6 +686,288 @@ class VolumeControl(ActionBase):
                 
         return sinks, sources
 
+    def get_application_streams(self) -> list[dict]:
+        """
+        Discovers currently active application audio playback streams.
+        Returns a list of dicts: [{'id': str, 'name': str, 'binary': str, 'icon': str, 'volume': int, 'mute': bool}]
+        """
+        apps = []
+        seen_names = set()
+
+        # 1. Try pulsectl first (native Python binding)
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-apps") as pulse:
+                for si in pulse.sink_input_list():
+                    props = si.proplist
+                    name = props.get("application.name") or props.get("media.name") or si.name
+                    binary = props.get("application.process.binary")
+                    icon = props.get("application.icon_name") or props.get("application.icon-name")
+                    if name:
+                        vol = int(round(pulse.volume_get_all_chans(si) * 100))
+                        apps.append({
+                            "id": str(si.index),
+                            "name": name,
+                            "binary": binary or name.lower(),
+                            "icon": icon,
+                            "volume": vol,
+                            "mute": bool(si.mute)
+                        })
+                        seen_names.add(name.lower())
+        except Exception:
+            pass
+
+        # 2. Try pw-dump / wpctl for modern PipeWire environments
+        if not apps:
+            try:
+                import subprocess, json
+                out = subprocess.check_output(["pw-dump"], text=True, stderr=subprocess.DEVNULL)
+                data = json.loads(out)
+                for obj in data:
+                    info = obj.get("info", {})
+                    props = info.get("props", {})
+                    media_class = props.get("media.class", "")
+                    if "Stream/Output/Audio" in media_class or "Audio/Sink" in media_class:
+                        name = props.get("application.name") or props.get("node.description") or props.get("node.name")
+                        binary = props.get("application.process.binary")
+                        icon = props.get("application.icon-name") or props.get("application.icon_name")
+                        node_id = str(obj.get("id"))
+                        if name and name.lower() not in seen_names:
+                            vol = 100
+                            mute = False
+                            try:
+                                vout = subprocess.check_output(["wpctl", "get-volume", node_id], text=True, stderr=subprocess.DEVNULL)
+                                import re
+                                m = re.search(r'Volume:\s*([\d\.]+)', vout)
+                                if m:
+                                    vol = int(round(float(m.group(1)) * 100))
+                                if "[MUTED]" in vout:
+                                    mute = True
+                            except Exception:
+                                pass
+                            apps.append({
+                                "id": node_id,
+                                "name": name,
+                                "binary": binary or name.lower(),
+                                "icon": icon,
+                                "volume": vol,
+                                "mute": mute
+                            })
+                            seen_names.add(name.lower())
+            except Exception:
+                pass
+
+        # 3. Try pactl fallback
+        if not apps:
+            try:
+                out = self.run_cmd(["pactl", "list", "sink-inputs"])
+                current_id = None
+                current_name = None
+                current_icon = None
+                current_bin = None
+                current_vol = 100
+                current_mute = False
+                import re
+                for line in out.splitlines():
+                    line_s = line.strip()
+                    if line.startswith("Sink Input #"):
+                        if current_name and current_name.lower() not in seen_names:
+                            apps.append({
+                                "id": current_id,
+                                "name": current_name,
+                                "binary": current_bin or current_name.lower(),
+                                "icon": current_icon,
+                                "volume": current_vol,
+                                "mute": current_mute
+                            })
+                            seen_names.add(current_name.lower())
+                        current_id = line.split("#")[-1].strip()
+                        current_name = None
+                        current_icon = None
+                        current_bin = None
+                        current_vol = 100
+                        current_mute = False
+                    elif "application.name =" in line_s:
+                        current_name = line_s.split("=", 1)[1].strip(' "')
+                    elif "application.icon_name =" in line_s:
+                        current_icon = line_s.split("=", 1)[1].strip(' "')
+                    elif "application.process.binary =" in line_s:
+                        current_bin = line_s.split("=", 1)[1].strip(' "')
+                    elif "Mute:" in line_s:
+                        current_mute = ("yes" in line_s)
+                    elif "Volume:" in line_s:
+                        vm = re.search(r'/\s*(\d+)%', line_s)
+                        if vm:
+                            current_vol = int(vm.group(1))
+                if current_name and current_name.lower() not in seen_names:
+                    apps.append({
+                        "id": current_id,
+                        "name": current_name,
+                        "binary": current_bin or current_name.lower(),
+                        "icon": current_icon,
+                        "volume": current_vol,
+                        "mute": current_mute
+                    })
+            except Exception:
+                pass
+
+        return apps
+
+    def get_application_status(self, app_target: str) -> "tuple[int, bool, str, str | None]":
+        """
+        Finds matching active application stream and returns (volume, is_muted, display_name, icon_name).
+        """
+        if not app_target:
+            return self.current_volume, self.last_mute, "App Audio", None
+
+        streams = self.get_application_streams()
+        target_lower = app_target.lower().strip()
+
+        for st in streams:
+            name_lower = st["name"].lower()
+            bin_lower = st.get("binary", "").lower()
+            id_str = str(st["id"])
+            if target_lower in name_lower or target_lower in bin_lower or target_lower == id_str:
+                return st["volume"], st["mute"], st["name"], st.get("icon")
+
+        return self.current_volume, self.last_mute, app_target, None
+
+    def change_application_volume(self, app_target: str, target_vol: int):
+        target_lower = app_target.lower().strip()
+        matched = False
+
+        # 1. pulsectl
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-app-vol") as pulse:
+                for si in pulse.sink_input_list():
+                    props = si.proplist
+                    name = (props.get("application.name") or si.name or "").lower()
+                    binary = (props.get("application.process.binary") or "").lower()
+                    if target_lower in name or target_lower in binary or target_lower == str(si.index):
+                        pulse.volume_set_all_chans(si, target_vol / 100.0)
+                        matched = True
+        except Exception:
+            pass
+
+        # 2. wpctl fallback
+        if not matched:
+            streams = self.get_application_streams()
+            for st in streams:
+                if target_lower in st["name"].lower() or target_lower in st.get("binary", "").lower() or target_lower == str(st["id"]):
+                    try:
+                        self.execute_cmd(["wpctl", "set-volume", str(st["id"]), f"{target_vol / 100.0:.2f}"])
+                        matched = True
+                    except Exception:
+                        pass
+
+        # 3. pactl fallback
+        if not matched:
+            try:
+                streams = self.get_application_streams()
+                for st in streams:
+                    if target_lower in st["name"].lower() or target_lower in st.get("binary", "").lower() or target_lower == str(st["id"]):
+                        self.execute_cmd(["pactl", "set-sink-input-volume", str(st["id"]), f"{target_vol}%"])
+            except Exception:
+                pass
+
+    def toggle_application_mute(self, app_target: str):
+        target_lower = app_target.lower().strip()
+        matched = False
+
+        # 1. pulsectl
+        try:
+            import pulsectl
+            with pulsectl.Pulse("volume-controller-plus-app-mute") as pulse:
+                for si in pulse.sink_input_list():
+                    props = si.proplist
+                    name = (props.get("application.name") or si.name or "").lower()
+                    binary = (props.get("application.process.binary") or "").lower()
+                    if target_lower in name or target_lower in binary or target_lower == str(si.index):
+                        pulse.mute(si, not si.mute)
+                        matched = True
+        except Exception:
+            pass
+
+        # 2. wpctl fallback
+        if not matched:
+            streams = self.get_application_streams()
+            for st in streams:
+                if target_lower in st["name"].lower() or target_lower in st.get("binary", "").lower() or target_lower == str(st["id"]):
+                    try:
+                        self.execute_cmd(["wpctl", "set-mute", str(st["id"]), "toggle"])
+                        matched = True
+                    except Exception:
+                        pass
+
+        # 3. pactl fallback
+        if not matched:
+            try:
+                streams = self.get_application_streams()
+                for st in streams:
+                    if target_lower in st["name"].lower() or target_lower in st.get("binary", "").lower() or target_lower == str(st["id"]):
+                        self.execute_cmd(["pactl", "set-sink-input-mute", str(st["id"]), "toggle"])
+            except Exception:
+                pass
+
+    def get_application_icon_path(self, app_name: str, icon_name: str | None = None) -> str | None:
+        """
+        Resolves the high-resolution SVG or PNG icon for an application from the desktop icon theme.
+        """
+        if not app_name and not icon_name:
+            return None
+
+        candidates = []
+        if icon_name:
+            candidates.append(icon_name)
+        if app_name:
+            clean = app_name.strip().lower()
+            candidates.append(clean)
+            candidates.append(clean.replace(" ", "-"))
+            candidates.append(clean.replace(" ", ""))
+            candidates.append(clean.replace(" ", "_"))
+            alias_map = {
+                "spotify": ["spotify", "spotify-client", "com.spotify.Client"],
+                "discord": ["discord", "com.discordapp.Discord", "vesktop"],
+                "chrome": ["google-chrome", "google-chrome-stable", "chromium"],
+                "google chrome": ["google-chrome", "google-chrome-stable", "chromium"],
+                "firefox": ["firefox", "org.mozilla.firefox"],
+                "vlc": ["vlc", "org.videolan.VLC"],
+                "steam": ["steam", "com.valvesoftware.Steam"],
+                "obs": ["obs", "com.obsproject.Studio", "obs-studio"],
+                "pipeweaver spotify": ["spotify", "spotify-client"],
+                "pipeweaver discord": ["discord"],
+                "pipeweaver system": ["audio-speakers", "audio-volume-high"]
+            }
+            for k, v in alias_map.items():
+                if k in clean:
+                    candidates.extend(v)
+
+        try:
+            from gi.repository import Gtk, Gdk
+            display = Gdk.Display.get_default()
+            if display:
+                icon_theme = Gtk.IconTheme.get_for_display(display)
+                for cand in candidates:
+                    if icon_theme.has_icon(cand):
+                        paintable = icon_theme.lookup_icon(cand, None, 48, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
+                        if paintable:
+                            f = paintable.get_file()
+                            if f and os.path.exists(f.get_path()):
+                                return f.get_path()
+        except Exception:
+            pass
+
+        # Check standard icons directories as fallback
+        for cand in candidates:
+            for base in ["/usr/share/icons/hicolor/48x48/apps", "/usr/share/icons/hicolor/scalable/apps", "/usr/share/pixmaps"]:
+                for ext in [".svg", ".png"]:
+                    p = os.path.join(base, cand + ext)
+                    if os.path.exists(p):
+                        return p
+
+        return None
+
     def get_pipewire_status(self, device_id: str) -> "tuple[int, bool]":
         dtype = self.get_active_device_type()
         
@@ -724,6 +1009,13 @@ class VolumeControl(ActionBase):
         return volume, mute
 
     def get_system_volume_status(self) -> "tuple[int, bool]":
+        dtype = self.get_active_device_type()
+        if dtype == "app":
+            settings = self.get_settings() or {}
+            active = getattr(self, "active_device_index", 1)
+            app_target = settings.get("app_name_2" if (active == 2 and settings.get("device_switch", False)) else "app_name", "")
+            vol, mute, _, _ = self.get_application_status(app_target)
+            return vol, mute
         device_id = self.get_configured_device_id()
         return self.get_pipewire_status(device_id)
 
@@ -755,8 +1047,15 @@ class VolumeControl(ActionBase):
         threading.Thread(target=self._change_volume_bg, args=(self.current_volume,), daemon=True).start()
 
     def _change_volume_bg(self, target_vol: int):
-        device_id = self.get_configured_device_id()
-        self.change_pipewire_volume(device_id, target_vol)
+        dtype = self.get_active_device_type()
+        if dtype == "app":
+            settings = self.get_settings() or {}
+            active = getattr(self, "active_device_index", 1)
+            app_target = settings.get("app_name_2" if (active == 2 and settings.get("device_switch", False)) else "app_name", "")
+            self.change_application_volume(app_target, target_vol)
+        else:
+            device_id = self.get_configured_device_id()
+            self.change_pipewire_volume(device_id, target_vol)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
         dtype = self.get_active_device_type()
@@ -786,8 +1085,15 @@ class VolumeControl(ActionBase):
         threading.Thread(target=self._toggle_mute_bg, daemon=True).start()
 
     def _toggle_mute_bg(self):
-        device_id = self.get_configured_device_id()
-        self.toggle_pipewire_mute(device_id)
+        dtype = self.get_active_device_type()
+        if dtype == "app":
+            settings = self.get_settings() or {}
+            active = getattr(self, "active_device_index", 1)
+            app_target = settings.get("app_name_2" if (active == 2 and settings.get("device_switch", False)) else "app_name", "")
+            self.toggle_application_mute(app_target)
+        else:
+            device_id = self.get_configured_device_id()
+            self.toggle_pipewire_mute(device_id)
 
     def load_icon_image(self, path: str) -> Image.Image | None:
         if not path or not os.path.exists(path):
@@ -891,19 +1197,30 @@ class VolumeControl(ActionBase):
         settings = self.get_settings() or {}
         active = getattr(self, "active_device_index", 1)
         device_switch_enabled = settings.get("device_switch", False)
+        volume_format = settings.get("volume_format", "percent")
         
         if active == 2 and device_switch_enabled:
             custom_icon_path = settings.get("custom_icon_2", "")
             custom_name = settings.get("custom_name_2", "")
             pw_name = settings.get("pipewire_device_name_2", "Default Sink")
             dtype = settings.get("device_type_2", "sink")
+            app_target = settings.get("app_name_2", "")
         else:
             custom_icon_path = settings.get("custom_icon", "")
             custom_name = settings.get("custom_name", "")
             pw_name = settings.get("pipewire_device_name", "Default Sink")
             dtype = settings.get("device_type", "sink")
+            app_target = settings.get("app_name", "")
             
-        title_text = custom_name if custom_name else pw_name
+        app_icon_auto = None
+        if dtype == "app":
+            vol, mute, app_display_name, icon_name = self.get_application_status(app_target)
+            title_text = custom_name if custom_name else (app_display_name if app_display_name else "App Audio")
+            if not custom_icon_path:
+                app_icon_auto = self.get_application_icon_path(app_target, icon_name)
+        else:
+            title_text = custom_name if custom_name else pw_name
+
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         font_path = settings.get("font_path", "")
 
@@ -912,7 +1229,9 @@ class VolumeControl(ActionBase):
             is_muted,
             title_text,
             custom_icon_path,
+            app_icon_auto,
             dtype,
+            volume_format,
             font_name,
             font_path,
             active,
@@ -931,14 +1250,27 @@ class VolumeControl(ActionBase):
             mid_draw = ImageDraw.Draw(mid_img)
 
             # Draw Volume Text (right of the knob, centered vertically)
-            vol_text = "MUTE" if is_muted else f"{volume}%"
+            if is_muted:
+                vol_text = "MUTE"
+            elif volume_format == "db":
+                if volume <= 0:
+                    vol_text = "-inf dB"
+                elif volume >= 100:
+                    vol_text = "0.0 dB"
+                else:
+                    db_val = 20.0 * math.log10(volume / 100.0)
+                    vol_text = f"{db_val:.1f} dB"
+            else:
+                vol_text = f"{volume}%"
+
             vol_color = (239, 68, 68, 255) if is_muted else (255, 255, 255, 255)
             
             # Resolve and cache fonts if they have changed or are not cached
             if (self._cached_font_title is None or 
                 self._cached_font_vol is None or 
                 font_name != self._cached_font_name or 
-                font_path != self._cached_font_path):
+                font_path != self._cached_font_path or
+                getattr(self, "_cached_vol_format", None) != volume_format):
                 
                 title_font_size = 14
                 font_file = None
@@ -989,9 +1321,11 @@ class VolumeControl(ActionBase):
                 except Exception:
                     self._cached_font_title = ImageFont.load_default()
                     
+                # In dB mode, use 16px font to ensure '-xx.x dB' fits comfortably
+                vol_font_size = 15 if volume_format == "db" else 19
                 try:
                     if vol_font_file:
-                        self._cached_font_vol = ImageFont.truetype(vol_font_file, 19 * RENDER_SCALE)
+                        self._cached_font_vol = ImageFont.truetype(vol_font_file, vol_font_size * RENDER_SCALE)
                     else:
                         self._cached_font_vol = ImageFont.load_default()
                 except Exception:
@@ -1001,6 +1335,7 @@ class VolumeControl(ActionBase):
                 self._cached_title_font_size = title_font_size
                 self._cached_font_name = font_name
                 self._cached_font_path = font_path
+                self._cached_vol_format = volume_format
 
             font_title = self._cached_font_title
             font_vol = self._cached_font_vol
@@ -1021,14 +1356,15 @@ class VolumeControl(ActionBase):
             # Icon Placement Area
             icon_drawn = False
             icon_w = 16
-            if not custom_icon_path:
+            effective_icon_path = custom_icon_path or app_icon_auto
+            if not effective_icon_path:
                 icon_filename = "input.png" if dtype == "source" else "output.png"
-                custom_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
+                effective_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
             icon_scale = 2.0
 
-            if custom_icon_path:
-                if custom_icon_path != self._cached_icon_path or self._cached_icon_img is None:
-                    loaded_img = self.load_icon_image(custom_icon_path)
+            if effective_icon_path:
+                if effective_icon_path != self._cached_icon_path or self._cached_icon_img is None:
+                    loaded_img = self.load_icon_image(effective_icon_path)
                     if loaded_img is not None:
                         loaded_img = loaded_img.convert("RGBA")
                         orig_w, orig_h = loaded_img.size
@@ -1044,7 +1380,7 @@ class VolumeControl(ActionBase):
                         self._cached_icon_img = loaded_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     else:
                         self._cached_icon_img = None
-                    self._cached_icon_path = custom_icon_path
+                    self._cached_icon_path = effective_icon_path
                     
                 if self._cached_icon_img is not None:
                     icon_img = self._cached_icon_img.copy()
@@ -1366,15 +1702,117 @@ class VolumeControl(ActionBase):
         finally:
             self._updating_dropdown_2 = False
 
+    def update_app_dropdown(self):
+        if not hasattr(self, "app_selector"):
+            return
+        self._updating_app_dropdown = True
+        try:
+            settings = self.get_settings() or {}
+            streams = self.get_application_streams()
+            
+            self.apps_map = []
+            seen = set()
+            for st in streams:
+                name = st["name"]
+                if name.lower() not in seen:
+                    self.apps_map.append(name)
+                    seen.add(name.lower())
+            
+            # Common defaults if not currently active
+            for default_app in ["Spotify", "Discord", "Google Chrome", "Firefox", "VLC", "Steam"]:
+                if default_app.lower() not in seen:
+                    self.apps_map.append(default_app)
+                    seen.add(default_app.lower())
+                    
+            self.apps_map.append("Custom Application...")
+            
+            self.app_model = Gtk.StringList()
+            for app_title in self.apps_map:
+                self.app_model.append(app_title)
+                
+            self.app_selector.set_model(self.app_model)
+            
+            current_app = settings.get("app_name", "Spotify")
+            selected_idx = 0
+            if current_app in self.apps_map:
+                selected_idx = self.apps_map.index(current_app)
+            elif current_app:
+                selected_idx = len(self.apps_map) - 1
+                
+            self.app_selector.set_selected(selected_idx)
+        finally:
+            self._updating_app_dropdown = False
+
+    def update_app_dropdown_2(self):
+        if not hasattr(self, "app_selector_2"):
+            return
+        self._updating_app_dropdown_2 = True
+        try:
+            settings = self.get_settings() or {}
+            streams = self.get_application_streams()
+            
+            self.apps_map_2 = []
+            seen = set()
+            for st in streams:
+                name = st["name"]
+                if name.lower() not in seen:
+                    self.apps_map_2.append(name)
+                    seen.add(name.lower())
+            
+            for default_app in ["Spotify", "Discord", "Google Chrome", "Firefox", "VLC", "Steam"]:
+                if default_app.lower() not in seen:
+                    self.apps_map_2.append(default_app)
+                    seen.add(default_app.lower())
+                    
+            self.apps_map_2.append("Custom Application...")
+            
+            self.app_model_2 = Gtk.StringList()
+            for app_title in self.apps_map_2:
+                self.app_model_2.append(app_title)
+                
+            self.app_selector_2.set_model(self.app_model_2)
+            
+            current_app = settings.get("app_name_2", "Discord")
+            selected_idx = 0
+            if current_app in self.apps_map_2:
+                selected_idx = self.apps_map_2.index(current_app)
+            elif current_app:
+                selected_idx = len(self.apps_map_2) - 1
+                
+            self.app_selector_2.set_selected(selected_idx)
+        finally:
+            self._updating_app_dropdown_2 = False
+
     def update_visibility(self, active: bool):
+        settings = self.get_settings() or {}
+        dtype = settings.get("device_type", "sink")
+        dtype_2 = settings.get("device_type_2", "sink")
+        
+        # Primary device controls visibility
+        is_app = (dtype == "app")
+        if hasattr(self, "pw_device_selector"):
+            self.pw_device_selector.set_visible(not is_app)
+        if hasattr(self, "app_selector"):
+            self.app_selector.set_visible(is_app)
+        if hasattr(self, "custom_app_row"):
+            self.custom_app_row.set_visible(is_app)
+
+        # Secondary device controls visibility
         if hasattr(self, "type_selector_2"):
             self.type_selector_2.set_visible(active)
-        if hasattr(self, "pw_device_selector_2"):
-            self.pw_device_selector_2.set_visible(active)
         if hasattr(self, "custom_name_row_2"):
             self.custom_name_row_2.set_visible(active)
         if hasattr(self, "icon_row_2"):
             self.icon_row_2.set_visible(active)
+            
+        is_app_2 = (dtype_2 == "app")
+        if hasattr(self, "pw_device_selector_2"):
+            self.pw_device_selector_2.set_visible(active and not is_app_2)
+        if hasattr(self, "app_selector_2"):
+            self.app_selector_2.set_visible(active and is_app_2)
+        if hasattr(self, "custom_app_row_2"):
+            self.custom_app_row_2.set_visible(active and is_app_2)
+
         if hasattr(self, "custom_name_row"):
             if active:
                 self.custom_name_row.set_title("Device Name 1")
@@ -1389,6 +1827,8 @@ class VolumeControl(ActionBase):
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         settings = self.get_settings() or {}
         dtype = settings.get("device_type", "sink")
+        dtype_2 = settings.get("device_type_2", "sink")
+        vol_format = settings.get("volume_format", "percent")
 
         # 1. Custom Name Row
         self.custom_name_row = Adw.EntryRow(
@@ -1406,11 +1846,13 @@ class VolumeControl(ActionBase):
         self.type_model = Gtk.StringList()
         self.type_model.append("Output (sink)")
         self.type_model.append("Input (source)")
+        self.type_model.append("Application Stream")
         self.type_selector = Adw.ComboRow(
             model=self.type_model,
             title="Device Type"
         )
-        self.type_selector.set_selected(0 if dtype == "sink" else 1)
+        type_idx = 0 if dtype == "sink" else (1 if dtype == "source" else 2)
+        self.type_selector.set_selected(type_idx)
 
         # 3. PipeWire Device Selector ComboRow
         self.pw_device_model = Gtk.StringList()
@@ -1418,37 +1860,70 @@ class VolumeControl(ActionBase):
             model=self.pw_device_model,
             title="PipeWire Device"
         )
-        
-        # Populate initial list
         self.update_device_dropdown()
 
-        # 3b. Device Switch Row
+        # 3b. Application Selector ComboRow & Custom Process Entry
+        self.app_model = Gtk.StringList()
+        self.app_selector = Adw.ComboRow(
+            model=self.app_model,
+            title="Application"
+        )
+        self.custom_app_row = Adw.EntryRow(
+            title="Application Process / Name",
+            text=settings.get("app_name", "Spotify")
+        )
+        self.update_app_dropdown()
+
+        # 4. Volume Format Selector
+        self.vol_format_model = Gtk.StringList()
+        self.vol_format_model.append("Percentage (%)")
+        self.vol_format_model.append("Decibels (dB)")
+        self.vol_format_selector = Adw.ComboRow(
+            model=self.vol_format_model,
+            title="Volume Display Format"
+        )
+        self.vol_format_selector.set_selected(0 if vol_format == "percent" else 1)
+
+        # 5. Device Switch Row
         self.device_switch_row = Adw.SwitchRow(
             title="Device Switch"
         )
         device_switch_active = settings.get("device_switch", False)
         self.device_switch_row.set_active(device_switch_active)
 
-        # 3c. Device Type 2 Selector
-        dtype_2 = settings.get("device_type_2", "sink")
+        # 6. Device Type 2 Selector
         self.type_model_2 = Gtk.StringList()
         self.type_model_2.append("Output (sink)")
         self.type_model_2.append("Input (source)")
+        self.type_model_2.append("Application Stream")
         self.type_selector_2 = Adw.ComboRow(
             model=self.type_model_2,
             title="Device Type 2"
         )
-        self.type_selector_2.set_selected(0 if dtype_2 == "sink" else 1)
+        type_idx_2 = 0 if dtype_2 == "sink" else (1 if dtype_2 == "source" else 2)
+        self.type_selector_2.set_selected(type_idx_2)
 
-        # 3d. PipeWire Device 2 Selector ComboRow
+        # 6b. PipeWire Device 2 Selector ComboRow
         self.pw_device_model_2 = Gtk.StringList()
         self.pw_device_selector_2 = Adw.ComboRow(
             model=self.pw_device_model_2,
             title="PipeWire Device 2"
         )
         self.update_device_dropdown_2()
+
+        # 6c. Application 2 Selector ComboRow & Custom Process Entry
+        self.app_model_2 = Gtk.StringList()
+        self.app_selector_2 = Adw.ComboRow(
+            model=self.app_model_2,
+            title="Application 2"
+        )
+        self.custom_app_row_2 = Adw.EntryRow(
+            title="Application Process / Name 2",
+            text=settings.get("app_name_2", "Discord")
+        )
+        self.update_app_dropdown_2()
         
-        # 4. Step size selector
+        # 7. Step size selector
         self.step_model = Gtk.StringList()
         step_sizes = ["1%", "2%", "5%", "10%"]
         for size in step_sizes:
@@ -1465,14 +1940,14 @@ class VolumeControl(ActionBase):
         else:
             self.step_selector.set_selected(2) # Default to 5%
             
-        # 5. Live Meter Toggle Row
+        # 8. Live Meter Toggle Row
         self.live_meter_row = Adw.SwitchRow(
             title="Live Peak Meter"
         )
         is_live_meter_enabled = settings.get("live_meter", True)
         self.live_meter_row.set_active(is_live_meter_enabled)
 
-        # 6. Custom Icon selection
+        # 9. Custom Icon selection
         self.icon_row = Adw.ActionRow(
             title="Device Icon"
         )
@@ -1488,7 +1963,7 @@ class VolumeControl(ActionBase):
         self.icon_row.add_suffix(self.choose_icon_button)
         self.icon_row.add_suffix(self.clear_icon_button)
 
-        # 6b. Custom Icon 2 selection
+        # 9b. Custom Icon 2 selection
         self.icon_row_2 = Adw.ActionRow(
             title="Device Icon 2"
         )
@@ -1504,7 +1979,7 @@ class VolumeControl(ActionBase):
         self.icon_row_2.add_suffix(self.choose_icon_button_2)
         self.icon_row_2.add_suffix(self.clear_icon_button_2)
 
-        # 7. Custom Font Row (using FontChooserDialog)
+        # 10. Custom Font Row
         friendly_font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         self.font_row = Adw.ActionRow(
             title="Font",
@@ -1520,9 +1995,14 @@ class VolumeControl(ActionBase):
         self.custom_name_row_2.connect("notify::text", self.on_custom_name_2_changed)
         self.type_selector.connect("notify::selected-item", self.on_device_type_changed)
         self.pw_device_selector.connect("notify::selected-item", self.on_pw_device_changed)
+        self.app_selector.connect("notify::selected-item", self.on_app_changed)
+        self.custom_app_row.connect("notify::text", self.on_custom_app_changed)
+        self.vol_format_selector.connect("notify::selected-item", self.on_vol_format_changed)
         self.device_switch_row.connect("notify::active", self.on_device_switch_toggled)
         self.type_selector_2.connect("notify::selected-item", self.on_device_type_2_changed)
         self.pw_device_selector_2.connect("notify::selected-item", self.on_pw_device_2_changed)
+        self.app_selector_2.connect("notify::selected-item", self.on_app_2_changed)
+        self.custom_app_row_2.connect("notify::text", self.on_custom_app_2_changed)
         self.step_selector.connect("notify::selected-item", self.on_step_changed)
         self.live_meter_row.connect("notify::active", self.on_live_meter_toggled)
         self.choose_icon_button.connect("clicked", self.on_choose_icon_clicked)
@@ -1553,16 +2033,21 @@ class VolumeControl(ActionBase):
         self.icon_expander.add_row(self.icon_row)
         self.icon_expander.add_row(self.icon_row_2)
         
-        # Update visibility of the secondary device rows based on switch state
+        # Update visibility of conditional rows based on initial state
         self.update_visibility(device_switch_active)
         
         return [
             self.text_expander,
             self.type_selector,
             self.pw_device_selector,
+            self.app_selector,
+            self.custom_app_row,
+            self.vol_format_selector,
             self.device_switch_row,
             self.type_selector_2,
             self.pw_device_selector_2,
+            self.app_selector_2,
+            self.custom_app_row_2,
             self.step_selector,
             self.live_meter_row,
             self.icon_expander
@@ -1582,39 +2067,102 @@ class VolumeControl(ActionBase):
 
     def on_device_type_changed(self, combo, *args):
         selected_index = combo.get_selected()
-        new_type = "sink" if selected_index == 0 else "source"
+        type_mapping = {0: "sink", 1: "source", 2: "app"}
+        new_type = type_mapping.get(selected_index, "sink")
         
         settings = self.get_settings() or {}
         settings["device_type"] = new_type
         
-        # Select System Default for the new type
-        settings["pipewire_device_id"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
-        settings["pipewire_device_name"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
+        if new_type in ["sink", "source"]:
+            settings["pipewire_device_id"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
+            settings["pipewire_device_name"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
+            self.update_device_dropdown()
+        else:
+            if not settings.get("app_name"):
+                settings["app_name"] = "Spotify"
+            self.update_app_dropdown()
+            
         self.set_settings(settings)
+        self.update_visibility(settings.get("device_switch", False))
         
-        # Rebuild the Device Selection dropdown items
-        self.update_device_dropdown()
-        
-        # Restart monitor and draw
         if getattr(self, "active_device_index", 1) == 1:
             self.restart_peak_monitor()
         self.update_ui_rendering(force=True)
 
     def on_device_type_2_changed(self, combo, *args):
         selected_index = combo.get_selected()
-        new_type = "sink" if selected_index == 0 else "source"
+        type_mapping = {0: "sink", 1: "source", 2: "app"}
+        new_type = type_mapping.get(selected_index, "sink")
         
         settings = self.get_settings() or {}
         settings["device_type_2"] = new_type
         
-        settings["pipewire_device_id_2"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
-        settings["pipewire_device_name_2"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
+        if new_type in ["sink", "source"]:
+            settings["pipewire_device_id_2"] = "@DEFAULT_SINK@" if new_type == "sink" else "@DEFAULT_SOURCE@"
+            settings["pipewire_device_name_2"] = "System Default Audio Output" if new_type == "sink" else "System Default Mic"
+            self.update_device_dropdown_2()
+        else:
+            if not settings.get("app_name_2"):
+                settings["app_name_2"] = "Discord"
+            self.update_app_dropdown_2()
+            
         self.set_settings(settings)
-        
-        self.update_device_dropdown_2()
+        self.update_visibility(settings.get("device_switch", False))
         
         if getattr(self, "active_device_index", 1) == 2:
             self.restart_peak_monitor()
+        self.update_ui_rendering(force=True)
+
+    def on_app_changed(self, combo, *args):
+        if getattr(self, "_updating_app_dropdown", False):
+            return
+        selected_index = combo.get_selected()
+        if hasattr(self, "apps_map") and 0 <= selected_index < len(self.apps_map):
+            chosen = self.apps_map[selected_index]
+            settings = self.get_settings() or {}
+            if chosen != "Custom Application...":
+                settings["app_name"] = chosen
+                if hasattr(self, "custom_app_row"):
+                    self.custom_app_row.set_text(chosen)
+            self.set_settings(settings)
+            self.update_ui_rendering(force=True)
+
+    def on_custom_app_changed(self, entry, *args):
+        settings = self.get_settings() or {}
+        val = entry.get_text().strip()
+        if val:
+            settings["app_name"] = val
+            self.set_settings(settings)
+            self.update_ui_rendering(force=True)
+
+    def on_app_2_changed(self, combo, *args):
+        if getattr(self, "_updating_app_dropdown_2", False):
+            return
+        selected_index = combo.get_selected()
+        if hasattr(self, "apps_map_2") and 0 <= selected_index < len(self.apps_map_2):
+            chosen = self.apps_map_2[selected_index]
+            settings = self.get_settings() or {}
+            if chosen != "Custom Application...":
+                settings["app_name_2"] = chosen
+                if hasattr(self, "custom_app_row_2"):
+                    self.custom_app_row_2.set_text(chosen)
+            self.set_settings(settings)
+            self.update_ui_rendering(force=True)
+
+    def on_custom_app_2_changed(self, entry, *args):
+        settings = self.get_settings() or {}
+        val = entry.get_text().strip()
+        if val:
+            settings["app_name_2"] = val
+            self.set_settings(settings)
+            self.update_ui_rendering(force=True)
+
+    def on_vol_format_changed(self, combo, *args):
+        selected_index = combo.get_selected()
+        fmt = "percent" if selected_index == 0 else "db"
+        settings = self.get_settings() or {}
+        settings["volume_format"] = fmt
+        self.set_settings(settings)
         self.update_ui_rendering(force=True)
 
     def on_pw_device_changed(self, combo, *args):

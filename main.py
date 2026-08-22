@@ -36,7 +36,7 @@ class PluginTemplate(PluginBase):
         self.register(
             plugin_name = "Volume Control for Stream Deck Plus",
             github_repo = "https://github.com/oparada1988/Volume-Controller-Plus",
-            plugin_version = "1.0.4",
+            plugin_version = "1.1.0",
             app_version = "1.0.0-alpha"
         )
 
