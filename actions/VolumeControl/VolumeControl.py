@@ -1129,6 +1129,14 @@ class VolumeControl(ActionBase):
         except Exception:
             pass
             
+        # Fallback to wpctl (native PipeWire)
+        try:
+            target_frac = f"{target_vol / 100.0:.2f}"
+            wp_target = "@DEFAULT_AUDIO_SOURCE@" if dtype == "source" else "@DEFAULT_AUDIO_SINK@"
+            self.execute_cmd(["wpctl", "set-volume", wp_target, target_frac])
+        except Exception:
+            pass
+
         # Fallback to pactl
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
@@ -1156,6 +1164,29 @@ class VolumeControl(ActionBase):
         self.update_ui_rendering()
         threading.Thread(target=self._change_volume_bg, args=(self.current_volume,), daemon=True).start()
 
+    def _notify_wavecontroller_ipc(self, target_vol: int = None, is_muted: bool = None):
+        try:
+            if os.path.exists("/tmp/wavecontroller.sock"):
+                import socket, json
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.08)
+                    s.connect("/tmp/wavecontroller.sock")
+                    dtype = self.get_active_device_type()
+                    settings = self.get_settings() or {}
+                    active = getattr(self, "active_device_index", 1)
+                    app_target = settings.get("app_name_2" if (active == 2 and settings.get("device_switch", False)) else "app_name", "")
+                    dev_id = self.get_configured_device_id()
+                    target_name = app_target if dtype == "app" else ("mic" if dtype == "source" else "master")
+                    payload = {
+                        "command": "sync_volume",
+                        "target": target_name,
+                        "volume": target_vol,
+                        "muted": is_muted
+                    }
+                    s.sendall(json.dumps(payload).encode('utf-8'))
+        except Exception:
+            pass
+
     def _change_volume_bg(self, target_vol: int):
         dtype = self.get_active_device_type()
         if dtype == "app":
@@ -1166,6 +1197,7 @@ class VolumeControl(ActionBase):
         else:
             device_id = self.get_configured_device_id()
             self.change_pipewire_volume(device_id, target_vol)
+        self._notify_wavecontroller_ipc(target_vol=target_vol)
 
     def toggle_pipewire_mute(self, device_id: str) -> None:
         dtype = self.get_active_device_type()
@@ -1182,6 +1214,13 @@ class VolumeControl(ActionBase):
         except Exception:
             pass
             
+        # Fallback to wpctl (native PipeWire)
+        try:
+            wp_target = "@DEFAULT_AUDIO_SOURCE@" if dtype == "source" else "@DEFAULT_AUDIO_SINK@"
+            self.execute_cmd(["wpctl", "set-mute", wp_target, "toggle"])
+        except Exception:
+            pass
+
         # Fallback to pactl
         cmd_type = "sink" if dtype == "sink" else "source"
         try:
@@ -1204,6 +1243,7 @@ class VolumeControl(ActionBase):
         else:
             device_id = self.get_configured_device_id()
             self.toggle_pipewire_mute(device_id)
+        self._notify_wavecontroller_ipc(is_muted=self.last_mute)
 
     def load_icon_image(self, path: str) -> Image.Image | None:
         if not path or not os.path.exists(path):
