@@ -184,17 +184,21 @@ class VolumeControl(ActionBase):
 
         # Reusable draw masks & title layout cache for peak performance
         cx = 70 * RENDER_SCALE
-        cy = 94 * RENDER_SCALE
-        r_arc = 46 * RENDER_SCALE
-        self._gx1 = cx - r_arc
-        self._gy1 = cy - r_arc
-        self._gx2 = cx + r_arc
-        self._gy2 = cy
+        cy = 98 * RENDER_SCALE
+        r_outer = 48 * RENDER_SCALE
+        r_inner = 43 * RENDER_SCALE
+        r_arc_box = 56 * RENDER_SCALE
+        arc_w = 7 * RENDER_SCALE
+        self._gx1 = cx - r_arc_box - 8 * RENDER_SCALE
+        self._gy1 = cy - r_arc_box - 8 * RENDER_SCALE
+        self._gx2 = cx + r_arc_box + 8 * RENDER_SCALE
+        self._gy2 = cy + 8 * RENDER_SCALE
         self._sub_width = self._gx2 - self._gx1
         self._sub_height = self._gy2 - self._gy1
         self._peak_mask_sub = Image.new("L", (self._sub_width, self._sub_height), 0)
         self._peak_mask_sub_draw = ImageDraw.Draw(self._peak_mask_sub)
-        self._sub_bbox = [(0, 0), (self._sub_width, self._sub_width)]
+        sub_box_w = 2 * r_arc_box
+        self._sub_bbox = [(8 * RENDER_SCALE, 8 * RENDER_SCALE), (8 * RENDER_SCALE + sub_box_w, 8 * RENDER_SCALE + sub_box_w)]
         self._last_title_text = None
         self._last_font_file = None
         self._last_font_name = None
@@ -1160,8 +1164,9 @@ class VolumeControl(ActionBase):
                 
             grad_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             grad_draw = ImageDraw.Draw(grad_img)
-            for angle in range(180, 360):
-                pct = (angle - 180) / 180.0
+            arc_w = 7 * RENDER_SCALE
+            for angle in range(210, 331):
+                pct = (angle - 210) / 120.0
                 if pct < 0.5:
                     t = pct / 0.5
                     r_col = int(0 + 235 * t)
@@ -1173,7 +1178,24 @@ class VolumeControl(ActionBase):
                     g_col = int(220 - 160 * t)
                     b_col = 0
                     
-                grad_draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=7 * RENDER_SCALE)
+                grad_draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=arc_w)
+                
+            # Seamless rounded caps on gradient
+            r_arc_box = (bbox[1][0] - bbox[0][0]) / 2.0
+            r_arc_center = r_arc_box - arc_w / 2.0
+            cap_r = arc_w / 2.0
+            cx_arc = (bbox[0][0] + bbox[1][0]) / 2.0
+            cy_arc = (bbox[0][1] + bbox[1][1]) / 2.0
+            
+            rad_start = math.radians(210)
+            xs = cx_arc + r_arc_center * math.cos(rad_start)
+            ys = cy_arc + r_arc_center * math.sin(rad_start)
+            grad_draw.ellipse([(xs - cap_r, ys - cap_r), (xs + cap_r, ys + cap_r)], fill=(0, 180, 0, 255))
+            
+            rad_end = math.radians(330)
+            xe = cx_arc + r_arc_center * math.cos(rad_end)
+            ye = cy_arc + r_arc_center * math.sin(rad_end)
+            grad_draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 60, 0, 255))
                 
             self._gauge_gradient_img = grad_img
             return self._gauge_gradient_img
@@ -1202,41 +1224,38 @@ class VolumeControl(ActionBase):
             if self.bg_image is not None:
                 bg = self.bg_image.resize((width, height), Image.Resampling.LANCZOS)
             else:
-                bg = Image.new("RGBA", (width, height), (28, 28, 28, 255))
+                bg = Image.new("RGBA", (width, height), (30, 30, 32, 255))
                 
             bg_draw = ImageDraw.Draw(bg)
             
-            # Pre-render Ticks (broken into quarters - 17 ticks total, every 11.25 degrees)
-            cx_bg, cy_bg = 70 * RENDER_SCALE, 94 * RENDER_SCALE
-            r_tick_major_start = 49 * RENDER_SCALE
-            r_tick_major_end = 58 * RENDER_SCALE
-            r_tick_minor_start = 53 * RENDER_SCALE
-            r_tick_minor_end = 57 * RENDER_SCALE
+            # Pre-render Ticks (9 clean radial ticks at 210, 225, 240, 255, 270, 285, 300, 315, 330)
+            cx_bg, cy_bg = 70 * RENDER_SCALE, 98 * RENDER_SCALE
+            tick_angles = [210, 225, 240, 255, 270, 285, 300, 315, 330]
+            r_tick_start = 58 * RENDER_SCALE
+            r_tick_end = 65 * RENDER_SCALE
+            tick_w = 2 * RENDER_SCALE
+            tick_color = (120, 122, 130, 255)
             
-            for i in range(17):
-                tick_angle = 180 + i * 11.25
-                rad = math.radians(tick_angle)
-                if i % 4 == 0:
-                    r_tick_start = r_tick_major_start
-                    r_tick_end = r_tick_major_end
-                    w = 3 * RENDER_SCALE
-                    color = (160, 162, 175, 255)
-                else:
-                    r_tick_start = r_tick_minor_start
-                    r_tick_end = r_tick_minor_end
-                    w = 1 * RENDER_SCALE
-                    color = (110, 112, 120, 255)
-                    
+            for t_angle in tick_angles:
+                rad = math.radians(t_angle)
                 x1 = cx_bg + r_tick_start * math.cos(rad)
                 y1 = cy_bg + r_tick_start * math.sin(rad)
                 x2 = cx_bg + r_tick_end * math.cos(rad)
                 y2 = cy_bg + r_tick_end * math.sin(rad)
-                bg_draw.line([(x1, y1), (x2, y2)], fill=color, width=w)
+                bg_draw.line([(x1, y1), (x2, y2)], fill=tick_color, width=tick_w)
                 
-            # Pre-render Gauge Track (inactive - dark background arc)
-            r_arc_bg = 46 * RENDER_SCALE
-            bbox_bg = [(cx_bg - r_arc_bg, cy_bg - r_arc_bg), (cx_bg + r_arc_bg, cy_bg + r_arc_bg)]
-            bg_draw.arc(bbox_bg, start=180, end=360, fill=(38, 38, 42, 255), width=7 * RENDER_SCALE)
+            # Pre-render Gauge Track (inactive - dark background arc with rounded caps)
+            r_arc_box = 56 * RENDER_SCALE
+            arc_w = 7 * RENDER_SCALE
+            r_arc_center = r_arc_box - arc_w / 2.0
+            cap_r = arc_w / 2.0
+            bbox_bg = [(cx_bg - r_arc_box, cy_bg - r_arc_box), (cx_bg + r_arc_box, cy_bg + r_arc_box)]
+            bg_draw.arc(bbox_bg, start=210, end=330, fill=(44, 44, 48, 255), width=arc_w)
+            for cap_angle in (210, 330):
+                rad_cap = math.radians(cap_angle)
+                xc = cx_bg + r_arc_center * math.cos(rad_cap)
+                yc = cy_bg + r_arc_center * math.sin(rad_cap)
+                bg_draw.ellipse([(xc - cap_r, yc - cap_r), (xc + cap_r, yc + cap_r)], fill=(44, 44, 48, 255))
             
             self._cached_base_bg = bg
 
@@ -1285,32 +1304,59 @@ class VolumeControl(ActionBase):
             device_switch_enabled
         )
 
-        cx, cy = 70 * RENDER_SCALE, 94 * RENDER_SCALE
-        r_outer = 43 * RENDER_SCALE
-        r_inner = 40 * RENDER_SCALE
-        r_arc = 46 * RENDER_SCALE
-        bbox = [(cx - r_arc, cy - r_arc), (cx + r_arc, cy + r_arc)]
+        cx, cy = 70 * RENDER_SCALE, 98 * RENDER_SCALE
+        r_outer = 48 * RENDER_SCALE
+        r_inner = 43 * RENDER_SCALE
+        r_arc_box = 56 * RENDER_SCALE
+        arc_w = 7 * RENDER_SCALE
+        r_arc_center = r_arc_box - arc_w / 2.0
+        cap_r = arc_w / 2.0
+        bbox = [(cx - r_arc_box, cy - r_arc_box), (cx + r_arc_box, cy + r_arc_box)]
 
         # If cache misses, rebuild static midground card (Text, Icon, Background tracks)
         if self._cached_midground is None or self._cached_midground_key != midground_key:
             mid_img = self._cached_base_bg.copy()
             mid_draw = ImageDraw.Draw(mid_img)
 
-            # Draw Volume Text (right of the knob, centered vertically)
+            # Draw Volume Text OR Mute Icon
             if is_muted:
-                vol_text = "MUTE"
-            elif volume_format == "db":
-                if volume <= 0:
-                    vol_text = "-inf dB"
-                elif volume >= 100:
-                    vol_text = "0.0 dB"
-                else:
-                    db_val = 20.0 * math.log10(volume / 100.0)
-                    vol_text = f"{db_val:.1f} dB"
+                mute_icon_name = "mute_input.png" if dtype == "source" else "mute_output.png"
+                mute_icon_path = os.path.join(self.plugin_base.PATH, "assets", mute_icon_name)
+                if not hasattr(self, "_cached_mute_icons"):
+                    self._cached_mute_icons = {}
+                if mute_icon_path not in self._cached_mute_icons or self._cached_mute_icons[mute_icon_path] is None:
+                    try:
+                        m_img = Image.open(mute_icon_path).convert("RGBA")
+                        target_s = 24 * RENDER_SCALE
+                        mw, mh = m_img.size
+                        if mw > mh:
+                            nw = target_s
+                            nh = max(1, int(mh * target_s / mw))
+                        else:
+                            nh = target_s
+                            nw = max(1, int(mw * target_s / mh))
+                        self._cached_mute_icons[mute_icon_path] = m_img.resize((nw, nh), Image.Resampling.LANCZOS)
+                    except Exception:
+                        self._cached_mute_icons[mute_icon_path] = None
+                        
+                cached_mute_img = self._cached_mute_icons.get(mute_icon_path)
+                if cached_mute_img is not None:
+                    mx = int(162 * RENDER_SCALE - cached_mute_img.width / 2)
+                    my = int(60 * RENDER_SCALE - cached_mute_img.height / 2)
+                    mid_img.paste(cached_mute_img, (mx, my), cached_mute_img)
             else:
-                vol_text = f"{volume}%"
+                if volume_format == "db":
+                    if volume <= 0:
+                        vol_text = "-inf dB"
+                    elif volume >= 100:
+                        vol_text = "0.0 dB"
+                    else:
+                        db_val = 20.0 * math.log10(volume / 100.0)
+                        vol_text = f"{db_val:.1f} dB"
+                else:
+                    vol_text = f"{volume}%"
 
-            vol_color = (239, 68, 68, 255) if is_muted else (255, 255, 255, 255)
+                vol_color = (255, 255, 255, 255)
             
             # Resolve and cache fonts if they have changed or are not cached
             if (self._cached_font_title is None or 
@@ -1389,16 +1435,17 @@ class VolumeControl(ActionBase):
             font_file = self._cached_font_file
             title_font_size = self._cached_title_font_size
 
-            try:
-                vol_w = font_vol.getlength(vol_text)
-            except Exception:
-                vol_w = 40
-                
-            try:
-                mid_draw.text((165 * RENDER_SCALE, 68 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
-            except TypeError:
-                vol_w_unscaled = vol_w / RENDER_SCALE
-                mid_draw.text((int((165 - vol_w_unscaled / 2) * RENDER_SCALE), int((68 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
+            if not is_muted:
+                try:
+                    vol_w = font_vol.getlength(vol_text)
+                except Exception:
+                    vol_w = 40
+                    
+                try:
+                    mid_draw.text((165 * RENDER_SCALE, 64 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
+                except TypeError:
+                    vol_w_unscaled = vol_w / RENDER_SCALE
+                    mid_draw.text((int((165 - vol_w_unscaled / 2) * RENDER_SCALE), int((64 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
 
             # Icon Placement Area
             icon_drawn = False
@@ -1570,13 +1617,26 @@ class VolumeControl(ActionBase):
                     if self._cached_vol_mask is None:
                         vol_mask = Image.new("L", (width, height), 0)
                         vol_mask_draw = ImageDraw.Draw(vol_mask)
-                        vol_mask_draw.arc(bbox, start=180, end=360, fill=75, width=7 * RENDER_SCALE)
+                        vol_mask_draw.arc(bbox, start=210, end=330, fill=75, width=arc_w)
+                        for cap_a in (210, 330):
+                            rc = math.radians(cap_a)
+                            xc = cx + r_arc_center * math.cos(rc)
+                            yc = cy + r_arc_center * math.sin(rc)
+                            vol_mask_draw.ellipse([(xc - cap_r, yc - cap_r), (xc + cap_r, yc + cap_r)], fill=75)
                         self._cached_vol_mask = vol_mask
                     mid_img.paste(grad_img, (0, 0), self._cached_vol_mask)
                 else:
-                    vol_angle = int(180 + 180 * (volume / 100.0))
-                    if vol_angle > 180:
-                        mid_draw.arc(bbox, start=180, end=vol_angle, fill=(0, 168, 255, 255), width=7 * RENDER_SCALE)
+                    vol_angle = int(210 + 120 * (volume / 100.0))
+                    if vol_angle > 210:
+                        mid_draw.arc(bbox, start=210, end=vol_angle, fill=(0, 168, 255, 255), width=arc_w)
+                        rc_start = math.radians(210)
+                        xs = cx + r_arc_center * math.cos(rc_start)
+                        ys = cy + r_arc_center * math.sin(rc_start)
+                        mid_draw.ellipse([(xs - cap_r, ys - cap_r), (xs + cap_r, ys + cap_r)], fill=(0, 168, 255, 255))
+                        rc_end = math.radians(vol_angle)
+                        xe = cx + r_arc_center * math.cos(rc_end)
+                        ye = cy + r_arc_center * math.sin(rc_end)
+                        mid_draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(0, 168, 255, 255))
 
             self._cached_midground = mid_img
             self._cached_midground_key = midground_key
@@ -1592,42 +1652,72 @@ class VolumeControl(ActionBase):
                 # Bouncing audio peak arc
                 if peak > 0.04:
                     scaled_peak = peak * (volume / 100.0)
-                    peak_angle = int(180 + 180 * scaled_peak)
-                    if peak_angle > 180:
+                    peak_angle = int(210 + 120 * min(1.0, scaled_peak))
+                    if peak_angle > 210:
+                        rad_s = math.radians(210)
+                        xs = cx + r_arc_center * math.cos(rad_s)
+                        ys = cy + r_arc_center * math.sin(rad_s)
+                        rad_e = math.radians(min(330, peak_angle))
+                        xe = cx + r_arc_center * math.cos(rad_e)
+                        ye = cy + r_arc_center * math.sin(rad_e)
+                        
                         if peak >= 0.99 or scaled_peak >= 0.99:
-                            # Make the active meter solid red when it reaches 100% peak
-                            draw.arc(bbox, start=180, end=min(360, peak_angle), fill=(255, 30, 30, 255), width=7 * RENDER_SCALE)
+                            draw.arc(bbox, start=210, end=min(330, peak_angle), fill=(255, 30, 30, 255), width=arc_w)
+                            draw.ellipse([(xs - cap_r, ys - cap_r), (xs + cap_r, ys + cap_r)], fill=(255, 30, 30, 255))
+                            draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 30, 30, 255))
                         else:
                             # Reuse the pre-allocated sub-mask to avoid heavy object instantiation
                             self._peak_mask_sub_draw.rectangle([(0, 0), (self._sub_width, self._sub_height)], fill=0)
-                            self._peak_mask_sub_draw.arc(self._sub_bbox, start=180, end=peak_angle, fill=255, width=7 * RENDER_SCALE)
+                            self._peak_mask_sub_draw.arc(self._sub_bbox, start=210, end=peak_angle, fill=255, width=arc_w)
+                            
+                            sub_cx = self._sub_bbox[0][0] + r_arc_box
+                            sub_cy = self._sub_bbox[0][1] + r_arc_box
+                            sub_xs = sub_cx + r_arc_center * math.cos(rad_s)
+                            sub_ys = sub_cy + r_arc_center * math.sin(rad_s)
+                            sub_xe = sub_cx + r_arc_center * math.cos(rad_e)
+                            sub_ye = sub_cy + r_arc_center * math.sin(rad_e)
+                            self._peak_mask_sub_draw.ellipse([(sub_xs - cap_r, sub_ys - cap_r), (sub_xs + cap_r, sub_ys + cap_r)], fill=255)
+                            self._peak_mask_sub_draw.ellipse([(sub_xe - cap_r, sub_ye - cap_r), (sub_xe + cap_r, sub_ye + cap_r)], fill=255)
+                            
                             grad_img_sub = self._get_gauge_gradient_image_sub(width, height, bbox)
                             img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
 
                 # Peak Hold marker (Floating bright indicator for studio console aesthetics)
                 if self._peak_hold_val > 0.04:
                     scaled_hold = self._peak_hold_val * (volume / 100.0)
-                    hold_angle = int(180 + 180 * scaled_hold)
-                    if hold_angle > 180:
-                        # Draw a small 2-degree bright highlight indicator directly on the image
-                        draw.arc(bbox, start=hold_angle - 1, end=hold_angle + 1, fill=(255, 75, 75, 255), width=7 * RENDER_SCALE)
+                    hold_angle = int(210 + 120 * min(1.0, scaled_hold))
+                    if hold_angle > 210:
+                        draw.arc(bbox, start=max(210, hold_angle - 1), end=min(330, hold_angle + 1), fill=(255, 75, 75, 255), width=arc_w)
 
-        # 5. Draw Inner Knob Core (Outer shadow/border + inner core chord & top curve arc)
+        # 5. Draw Inner Knob Core (Outer bezel + inner disc & top highlight arc)
         bbox_outer = [(cx - r_outer, cy - r_outer), (cx + r_outer, cy + r_outer)]
-        draw.chord(bbox_outer, start=180, end=360, fill=(18, 18, 20, 255))
+        draw.chord(bbox_outer, start=180, end=360, fill=(35, 35, 38, 255))
         bbox_inner = [(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)]
-        draw.chord(bbox_inner, start=180, end=360, fill=(28, 28, 32, 255))
-        draw.arc(bbox_inner, start=180, end=360, fill=(60, 62, 72, 255), width=1 * RENDER_SCALE)
+        draw.chord(bbox_inner, start=180, end=360, fill=(66, 66, 70, 255))
+        draw.arc(bbox_inner, start=180, end=360, fill=(85, 85, 92, 255), width=1 * RENDER_SCALE)
         
-        # 6. Draw Pointer line on top of the knob
-        pointer_angle = 180 + 180 * (volume / 100.0)
+        # 6. Draw Pointer notch rotating on top of the knob
+        pointer_angle = 210 + 120 * (volume / 100.0)
         rad_pt = math.radians(pointer_angle)
-        xp1 = cx + 12 * RENDER_SCALE * math.cos(rad_pt)
-        yp1 = cy + 12 * RENDER_SCALE * math.sin(rad_pt)
-        xp2 = cx + 34 * RENDER_SCALE * math.cos(rad_pt)
-        yp2 = cy + 34 * RENDER_SCALE * math.sin(rad_pt)
-        pointer_color = (239, 68, 68, 255) if is_muted else (240, 242, 250, 255)
-        draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=3 * RENDER_SCALE)
+        r_notch_in = 28 * RENDER_SCALE
+        r_notch_out = 39 * RENDER_SCALE
+        xp1 = cx + r_notch_in * math.cos(rad_pt)
+        yp1 = cy + r_notch_in * math.sin(rad_pt)
+        xp2 = cx + r_notch_out * math.cos(rad_pt)
+        yp2 = cy + r_notch_out * math.sin(rad_pt)
+        pointer_color = (255, 255, 255, 255)
+        notch_w = int(2.5 * RENDER_SCALE)
+        draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=notch_w)
+
+        # 7. Red perimeter border when muted
+        if is_muted:
+            border_w = 2 * RENDER_SCALE
+            draw.rounded_rectangle(
+                [(1 * RENDER_SCALE, 1 * RENDER_SCALE), (width - 1 - 1 * RENDER_SCALE, height - 1 - 1 * RENDER_SCALE)],
+                radius=12 * RENDER_SCALE,
+                outline=(255, 59, 48, 255),
+                width=border_w
+            )
         
         if RENDER_SCALE > 1:
             return img.resize((200, 100), Image.Resampling.BILINEAR)
