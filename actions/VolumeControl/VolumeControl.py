@@ -917,40 +917,57 @@ class VolumeControl(ActionBase):
         if not app_name and not icon_name:
             return None
 
+        daemon_tags = {
+            "io.github.pipeweaver", "pipeweaver",
+            "org.pulseaudio.pavucontrol", "pavucontrol",
+            "pulseaudio", "audio-speakers", "audio-volume-high", "audio-card"
+        }
+
         candidates = []
-        if icon_name:
-            candidates.append(icon_name)
+        fallback_candidates = []
+
         if app_name:
             clean = app_name.strip().lower()
+            for prefix in ["pipeweaver ", "pipeweaver-", "alsa "]:
+                if clean.startswith(prefix):
+                    clean = clean[len(prefix):].strip()
+
             candidates.append(clean)
             candidates.append(clean.replace(" ", "-"))
             candidates.append(clean.replace(" ", ""))
             candidates.append(clean.replace(" ", "_"))
+
             alias_map = {
                 "spotify": ["spotify", "spotify-client", "com.spotify.Client"],
-                "discord": ["discord", "com.discordapp.Discord", "vesktop"],
-                "chrome": ["google-chrome", "google-chrome-stable", "chromium"],
+                "discord": ["discord", "com.discordapp.Discord", "discord-canary", "vesktop"],
+                "chrome": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
                 "google chrome": ["google-chrome", "google-chrome-stable", "chromium"],
-                "firefox": ["firefox", "org.mozilla.firefox"],
+                "firefox": ["firefox", "org.mozilla.firefox", "firefox-esr"],
                 "vlc": ["vlc", "org.videolan.VLC"],
                 "steam": ["steam", "com.valvesoftware.Steam"],
-                "obs": ["obs", "com.obsproject.Studio", "obs-studio"],
-                "pipeweaver spotify": ["spotify", "spotify-client"],
-                "pipeweaver discord": ["discord"],
-                "pipeweaver system": ["audio-speakers", "audio-volume-high"]
+                "obs": ["com.obsproject.Studio", "obs-studio", "obs"]
             }
             for k, v in alias_map.items():
                 if k in clean:
                     candidates.extend(v)
+
+        if icon_name:
+            clean_icon = icon_name.strip().lower()
+            if clean_icon in daemon_tags or any(d in clean_icon for d in daemon_tags):
+                fallback_candidates.append(icon_name)
+            else:
+                candidates.insert(0, icon_name)
+
+        all_candidates = candidates + fallback_candidates
 
         try:
             from gi.repository import Gtk, Gdk
             display = Gdk.Display.get_default()
             if display:
                 icon_theme = Gtk.IconTheme.get_for_display(display)
-                for cand in candidates:
+                for cand in all_candidates:
                     if icon_theme.has_icon(cand):
-                        paintable = icon_theme.lookup_icon(cand, None, 48, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
+                        paintable = icon_theme.lookup_icon(cand, None, 128, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
                         if paintable:
                             f = paintable.get_file()
                             if f and os.path.exists(f.get_path()):
@@ -959,8 +976,8 @@ class VolumeControl(ActionBase):
             pass
 
         # Check standard icons directories as fallback
-        for cand in candidates:
-            for base in ["/usr/share/icons/hicolor/48x48/apps", "/usr/share/icons/hicolor/scalable/apps", "/usr/share/pixmaps"]:
+        for cand in all_candidates:
+            for base in ["/usr/share/icons/hicolor/scalable/apps", "/usr/share/icons/hicolor/48x48/apps", "/usr/share/pixmaps", "/run/host/share/icons/Papirus/48x48/apps"]:
                 for ext in [".svg", ".png"]:
                     p = os.path.join(base, cand + ext)
                     if os.path.exists(p):
@@ -1100,9 +1117,39 @@ class VolumeControl(ActionBase):
             return None
         try:
             if path.endswith(".svg"):
-                return gl.media_manager.generate_svg_thumbnail(path)
+                # 1. Try cairosvg direct rasterization
+                try:
+                    import cairosvg, io
+                    with open(path, 'rb') as f:
+                        svg_bytes = f.read()
+                    png_bytes = cairosvg.svg2png(bytestring=svg_bytes, output_width=128, output_height=128)
+                    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                except Exception:
+                    pass
+
+                # 2. Try StreamController media manager
+                try:
+                    img = gl.media_manager.generate_svg_thumbnail(path, 128, 128)
+                    if img is not None:
+                        return img.convert("RGBA")
+                except Exception:
+                    pass
+
+                # 3. Try GdkPixbuf fallback
+                try:
+                    import gi
+                    gi.require_version("GdkPixbuf", "2.0")
+                    from gi.repository import GdkPixbuf
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 128, 128, True)
+                    png_bytes = pixbuf.save_to_bufferv("png", [], [])[1]
+                    import io
+                    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                except Exception:
+                    pass
+
+                return None
             else:
-                return Image.open(path)
+                return Image.open(path).convert("RGBA")
         except Exception:
             return None
 
@@ -1355,12 +1402,11 @@ class VolumeControl(ActionBase):
 
             # Icon Placement Area
             icon_drawn = False
-            icon_w = 16
+            icon_w = 26
             effective_icon_path = custom_icon_path or app_icon_auto
             if not effective_icon_path:
                 icon_filename = "input.png" if dtype == "source" else "output.png"
                 effective_icon_path = os.path.join(self.plugin_base.PATH, "assets", icon_filename)
-            icon_scale = 2.0
 
             if effective_icon_path:
                 if effective_icon_path != self._cached_icon_path or self._cached_icon_img is None:
@@ -1368,9 +1414,7 @@ class VolumeControl(ActionBase):
                     if loaded_img is not None:
                         loaded_img = loaded_img.convert("RGBA")
                         orig_w, orig_h = loaded_img.size
-                        base_size = 14
-                        scaled_size = max(4, min(int(base_size * icon_scale), 28))
-                        target_max = scaled_size * RENDER_SCALE
+                        target_max = int(27 * RENDER_SCALE)
                         if orig_w > orig_h:
                             new_w = target_max
                             new_h = max(1, int(orig_h * target_max / orig_w))
@@ -1388,7 +1432,7 @@ class VolumeControl(ActionBase):
                     icon_h_unscaled = icon_img.height // RENDER_SCALE
                     x_start = 12
                     y_start = 16 - icon_h_unscaled // 2
-                    y_start = max(6, min(y_start, 38 - icon_h_unscaled))
+                    y_start = max(3, min(y_start, 38 - icon_h_unscaled))
                     mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
                     
                     icon_drawn = True
