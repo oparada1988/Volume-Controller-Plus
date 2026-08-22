@@ -49,35 +49,77 @@ class VolumePeakMonitor:
         target_device = self.device_id
         if not self.is_source:
             target_device = self.device_id + ".monitor"
-            
-        cmd = [
-            'parecord',
-            '--raw',
-            '--format=s16le',
-            '--channels=2',
-            '--rate=44100',
-            '--latency-msec=30',
-            '--process-time-msec=10',
-            '--property=application.id=org.PulseAudio.pavucontrol',
-            '--device=' + target_device
-        ]
-        try:
-            self.proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception:
+
+        is_flatpak = os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
+        node_name = f"vcp_monitor_{id(self)}"
+
+        # 1. Inside Flatpak container: spawn pw-record on host via flatpak-spawn
+        if is_flatpak:
+            cmd = [
+                'flatpak-spawn', '--host',
+                'pw-record',
+                '-P', f'node.name={node_name}',
+                '--raw',
+                '--format=s16',
+                '--rate=48000',
+                '--channels=2',
+                '--latency=20ms',
+                '-'
+            ]
             try:
-                cmd[0] = 'parec'
-                self.proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
-                )
+                self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                time.sleep(0.12)
+                if not self.is_source:
+                    try:
+                        out = subprocess.check_output(['flatpak-spawn', '--host', 'pw-link', '-o'], text=True, stderr=subprocess.DEVNULL)
+                        mon_fl, mon_fr = None, None
+                        for l in out.splitlines():
+                            line = l.strip()
+                            if 'iec958' in line.lower():
+                                continue
+                            if 'monitor_FL' in line and ('analog' in line or 'pci' in line or 'output' in line):
+                                mon_fl = line
+                            elif 'monitor_FR' in line and ('analog' in line or 'pci' in line or 'output' in line):
+                                mon_fr = line
+                        if mon_fl and mon_fr:
+                            subprocess.run(['flatpak-spawn', '--host', 'pw-link', '-d', 'alsa_input.usb-3142_fifine_Microphone-00.analog-stereo:capture_FL', f'{node_name}:input_FL'], stderr=subprocess.DEVNULL)
+                            subprocess.run(['flatpak-spawn', '--host', 'pw-link', '-d', 'alsa_input.usb-3142_fifine_Microphone-00.analog-stereo:capture_FR', f'{node_name}:input_FR'], stderr=subprocess.DEVNULL)
+                            subprocess.run(['flatpak-spawn', '--host', 'pw-link', mon_fl, f'{node_name}:input_FL'], stderr=subprocess.DEVNULL)
+                            subprocess.run(['flatpak-spawn', '--host', 'pw-link', mon_fr, f'{node_name}:input_FR'], stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
             except Exception:
-                self.running = False
-                return
+                self.proc = None
+
+        # 2. Native host fallback (pw-record, parecord, parec)
+        if not self.proc:
+            cmd = [
+                'pw-record',
+                '-P', f'node.name={node_name}',
+                '--raw',
+                '--format=s16',
+                '--rate=48000',
+                '--channels=2',
+                '--latency=20ms',
+                '-'
+            ]
+            try:
+                self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            except Exception:
+                cmd_pa = [
+                    'parecord',
+                    '--raw',
+                    '--format=s16le',
+                    '--channels=2',
+                    '--rate=44100',
+                    '--latency-msec=30',
+                    '--device=' + target_device
+                ]
+                try:
+                    self.proc = subprocess.Popen(cmd_pa, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                except Exception:
+                    self.running = False
+                    return
 
         fd = self.proc.stdout.fileno()
         flags = fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -593,17 +635,17 @@ class VolumeControl(ActionBase):
         raw_peak = self.peak_monitor.get_peak()
         # Apply a 1.5x gain boost to ensure standard audio peaks reach the red/orange zone at 100% volume
         raw_peak = max(0.0, min(1.0, raw_peak * 1.5))
-        if raw_peak < 0.04:
+        if raw_peak < 0.005:
             raw_peak = 0.0
             
         # Fast attack, slow release exponential smoothing for premium hardware meter physics
         if raw_peak >= self._current_peak:
             self._current_peak = raw_peak
         else:
-            self._current_peak = max(raw_peak, self._current_peak * 0.88 - 0.005)
+            self._current_peak = max(raw_peak, self._current_peak * 0.88 - 0.002)
             
         peak = self._current_peak
-        if peak < 0.01:
+        if peak < 0.005:
             peak = 0.0
 
         # Peak hold logic

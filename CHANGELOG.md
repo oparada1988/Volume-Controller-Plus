@@ -2,6 +2,13 @@
 
 All notable changes to **Volume Controller Plus** will be documented in this file.
 
+## [1.1.2] - 2026-08-22
+
+### ⚡ Engine & Peak Monitoring Enhancements
+- **Flatpak Host Audio Bridge**: Added automatic Flatpak environment detection with `flatpak-spawn --host pw-record` bridge, allowing seamless PipeWire peak monitoring within containerized environments.
+- **Active Sound Card Monitor Prioritization**: Filtered out silent digital IEC958 microphone ports from sink monitor link discovery, ensuring accurate live VU meter rendering for Spotify and desktop media playback.
+- **Calibrated Noise Floor Cutoff**: Lowered noise gate threshold from `0.04` to `0.005` with high-responsiveness exponential decay physics.
+
 ## [1.1.1] - 2026-08-22
 
 ### 🎨 Visual & UI Design Enhancements
