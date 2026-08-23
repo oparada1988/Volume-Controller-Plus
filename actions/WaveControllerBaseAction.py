@@ -444,6 +444,9 @@ class WaveControllerBaseAction(ActionBase):
         # Build Midground Card (Text, Icon, Inner Knob)
         if self._cached_midground is None or self._cached_midground_key != midground_key:
             mid_img = self._cached_base_bg.copy()
+            if is_muted:
+                red_tint = Image.new("RGBA", (width, height), (239, 68, 68, 48))
+                mid_img = Image.alpha_composite(mid_img, red_tint)
             mid_draw = ImageDraw.Draw(mid_img)
 
             # Draw Volume Text
