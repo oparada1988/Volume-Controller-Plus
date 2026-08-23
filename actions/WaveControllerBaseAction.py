@@ -155,16 +155,34 @@ class WaveControllerBaseAction(ActionBase):
         settings = self.get_settings() or {}
         return settings.get("live_meter", True)
 
+    def _extract_peak_value(self, val) -> float:
+        if isinstance(val, dict):
+            l = float(val.get("left", val.get("l", 0.0)))
+            r = float(val.get("right", val.get("r", 0.0)))
+            p = float(val.get("peak", max(l, r)))
+            return max(l, r, p)
+        elif isinstance(val, (list, tuple)):
+            if len(val) >= 2:
+                return max(float(val[0]), float(val[1]))
+            elif len(val) == 1:
+                return float(val[0])
+        elif isinstance(val, (int, float)):
+            return float(val)
+        return 0.0
+
     def event_callback(self, event: InputEvent, data: dict = None):
-        if event == Input.Dial.Events.TURN:
+        if event == Input.Dial.Events.TURN_CW:
             step_val = self.get_step_size()
-            steps = data.get("steps", 0)
-            delta = steps * step_val
-            if delta != 0:
-                self.handle_volume_change(delta)
-        elif event in (Input.Dial.Events.SHORT_PRESS, Input.Dial.Events.DOWN):
+            self.handle_volume_change(step_val)
+        elif event == Input.Dial.Events.TURN_CCW:
+            step_val = self.get_step_size()
+            self.handle_volume_change(-step_val)
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_UP, Input.Dial.Events.SHORT_TOUCH_PRESS):
             self.handle_mute_toggle()
-        elif event in (Input.Touchscreen.Events.SHORT_PRESS, Input.Touchscreen.Events.TAP):
+        elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
+            getattr(Input.Touchscreen.Events, "SHORT_PRESS", None),
+            getattr(Input.Touchscreen.Events, "TAP", None)
+        ):
             self.handle_mute_toggle()
 
     def on_tick_update(self) -> bool:

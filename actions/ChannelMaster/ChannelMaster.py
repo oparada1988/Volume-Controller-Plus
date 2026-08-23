@@ -74,12 +74,15 @@ class ChannelMaster(WaveControllerBaseAction):
     def get_current_peak_val(self) -> float:
         ch_id = self.get_configured_channel_id()
         peaks = self.client.get_peaks()
-        ch_peaks = peaks.get(ch_id, [0.0, 0.0])
-        if isinstance(ch_peaks, (list, tuple)) and len(ch_peaks) >= 2:
-            return max(float(ch_peaks[0]), float(ch_peaks[1]))
-        elif isinstance(ch_peaks, (int, float)):
-            return float(ch_peaks)
-        return 0.0
+        val = peaks.get(ch_id)
+        if val is None:
+            for k, v in peaks.items():
+                if k.lower() == ch_id.lower() or k.lower() in ch_id.lower() or ch_id.lower() in k.lower():
+                    val = v
+                    break
+        if val is None and ch_id.lower() not in ("mic", "microphone", "input"):
+            val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
+        return self._extract_peak_value(val)
 
     def update_channel_dropdown(self):
         if not hasattr(self, "channel_selector"):

@@ -29,6 +29,7 @@ class WaveControllerClient:
         self._cached_channels_data = None
         self._last_channels_time = 0.0
         self._req_lock = threading.Lock()
+        self._socket = None
 
     def _get_socket_paths(self) -> list:
         paths = [self.config_socket_path]
@@ -39,42 +40,58 @@ class WaveControllerClient:
         paths.append("/tmp/wavecontroller.sock")
         return list(dict.fromkeys(paths))
 
-    def send_command(self, cmd_dict: dict, timeout: float = 0.20) -> dict:
-        """Sends a JSON command to WaveController and returns the parsed response."""
-        with self._req_lock:
-            sock = None
-            for p in self._get_socket_paths():
-                if os.path.exists(p):
-                    try:
-                        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                        sock.settimeout(timeout)
-                        sock.connect(p)
-                        break
-                    except Exception:
-                        if sock:
-                            try:
-                                sock.close()
-                            except Exception:
-                                pass
-                        sock = None
+    def _get_connected_socket(self, timeout: float = 0.20):
+        if self._socket is not None:
+            return self._socket
 
-            if sock is None:
-                return {}
-
-            try:
-                payload = json.dumps(cmd_dict).encode("utf-8")
-                sock.sendall(payload)
-                raw_res = sock.recv(8192).decode("utf-8")
-                if raw_res:
-                    return json.loads(raw_res)
-            except Exception:
-                pass
-            finally:
+        for p in self._get_socket_paths():
+            if os.path.exists(p):
                 try:
-                    sock.close()
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    s.settimeout(timeout)
+                    s.connect(p)
+                    self._socket = s
+                    return self._socket
                 except Exception:
-                    pass
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+        return None
 
+    def send_command(self, cmd_dict: dict, timeout: float = 0.15) -> dict:
+        """Sends a JSON command to WaveController over persistent socket and returns the parsed response."""
+        with self._req_lock:
+            for attempt in range(2):
+                sock = self._get_connected_socket(timeout=timeout)
+                if sock is None:
+                    return {}
+
+                try:
+                    sock.settimeout(timeout)
+                    payload = (json.dumps(cmd_dict) + "\n").encode("utf-8")
+                    sock.sendall(payload)
+
+                    raw_res = ""
+                    while "\n" not in raw_res:
+                        chunk = sock.recv(4096).decode("utf-8")
+                        if not chunk:
+                            break
+                        raw_res += chunk
+
+                    if raw_res:
+                        line = raw_res.strip().split("\n")[0]
+                        if line:
+                            return json.loads(line)
+                except Exception:
+                    if self._socket:
+                        try:
+                            self._socket.close()
+                        except Exception:
+                            pass
+                    self._socket = None
+                    if attempt == 1:
+                        return {}
             return {}
 
     def _load_config_fallback(self) -> dict:

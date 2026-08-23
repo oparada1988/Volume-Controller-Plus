@@ -94,28 +94,36 @@ class MixMaster(WaveControllerBaseAction):
         self.update_ui_rendering(force=True)
 
     def event_callback(self, event: InputEvent, data: dict = None):
-        if event == Input.Dial.Events.TURN:
+        if event == Input.Dial.Events.TURN_CW:
             step_val = self.get_step_size()
-            steps = data.get("steps", 0)
-            delta = steps * step_val
-            if delta != 0:
-                self.handle_volume_change(delta)
-        elif event in (Input.Dial.Events.SHORT_PRESS, Input.Dial.Events.DOWN):
+            self.handle_volume_change(step_val)
+        elif event == Input.Dial.Events.TURN_CCW:
+            step_val = self.get_step_size()
+            self.handle_volume_change(-step_val)
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_UP, Input.Dial.Events.SHORT_TOUCH_PRESS):
             self.handle_mute_toggle()
-        elif event in (Input.Touchscreen.Events.SHORT_PRESS, Input.Touchscreen.Events.TAP):
+        elif event == Input.Dial.Events.LONG_TOUCH_PRESS:
+            self.handle_cycle_device()
+        elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
+            getattr(Input.Touchscreen.Events, "SHORT_PRESS", None),
+            getattr(Input.Touchscreen.Events, "TAP", None)
+        ):
             self.handle_mute_toggle()
-        elif event in (Input.Touchscreen.Events.LONG_PRESS, Input.Touchscreen.Events.DRAG):
+        elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
+            getattr(Input.Touchscreen.Events, "DRAG_LEFT", None),
+            getattr(Input.Touchscreen.Events, "DRAG_RIGHT", None),
+            getattr(Input.Touchscreen.Events, "LONG_PRESS", None),
+            getattr(Input.Touchscreen.Events, "DRAG", None)
+        ):
             self.handle_cycle_device()
 
     def get_current_peak_val(self) -> float:
         m_id = self.get_configured_mix_id()
         peaks = self.client.get_peaks()
-        mix_peaks = peaks.get(f"{m_id}_mix", peaks.get(m_id, [0.0, 0.0]))
-        if isinstance(mix_peaks, (list, tuple)) and len(mix_peaks) >= 2:
-            return max(float(mix_peaks[0]), float(mix_peaks[1]))
-        elif isinstance(mix_peaks, (int, float)):
-            return float(mix_peaks)
-        return 0.0
+        val = peaks.get(f"{m_id}_mix", peaks.get(m_id, peaks.get("master")))
+        if val is None:
+            val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
+        return self._extract_peak_value(val)
 
     def update_dropdowns(self):
         if not hasattr(self, "mix_selector") or not hasattr(self, "device_selector"):
