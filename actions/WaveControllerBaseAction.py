@@ -198,19 +198,32 @@ class WaveControllerBaseAction(ActionBase):
         # Update live VU peak
         if self.get_live_meter() and not self.last_mute:
             raw_peak = self.get_current_peak_val()
-            smooth_decay = 0.85
-            self._current_peak = max(raw_peak, self._current_peak * smooth_decay)
             
+            # Smooth responsive attack + graceful exponential fade-to-zero
+            if raw_peak > self._current_peak:
+                self._current_peak = min(1.0, self._current_peak + (raw_peak - self._current_peak) * 0.75)
+            else:
+                self._current_peak = max(0.0, self._current_peak * 0.92 - 0.002)
+                if self._current_peak < 0.002:
+                    self._current_peak = 0.0
+
             # Peak hold marker decay
             if self._current_peak >= self._peak_hold_val:
                 self._peak_hold_val = self._current_peak
                 self._peak_hold_time = now
             elif (now - self._peak_hold_time) > 1.2:
-                self._peak_hold_val = max(self._current_peak, self._peak_hold_val - 0.04)
+                self._peak_hold_val = max(self._current_peak, self._peak_hold_val - 0.03)
 
             self.update_ui_rendering(peak=self._current_peak)
         else:
-            self.update_ui_rendering(peak=0.0)
+            # Gracefully fade out any residual peak when muted or stopped
+            if self._current_peak > 0.0:
+                self._current_peak = max(0.0, self._current_peak * 0.88 - 0.004)
+                if self._current_peak < 0.002:
+                    self._current_peak = 0.0
+                self.update_ui_rendering(peak=self._current_peak)
+            else:
+                self.update_ui_rendering(peak=0.0)
 
         return True
 
