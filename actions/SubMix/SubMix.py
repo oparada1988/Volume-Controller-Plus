@@ -50,6 +50,42 @@ class SubMix(WaveControllerBaseAction):
         self.current_volume = int(vol) if vol is not None else 80
         self.last_mute = bool(muted) if muted is not None else False
 
+    def _match_channel(self, ch_id: str, channels: list) -> dict:
+        if not channels:
+            return {}
+        if not ch_id:
+            return channels[0]
+        ch_id_low = ch_id.lower().strip()
+        for c in channels:
+            if c.get("id") == ch_id or c.get("name", "").lower() == ch_id_low:
+                return c
+        for c in channels:
+            cand_id = c.get("id", "").lower()
+            cand_name = c.get("name", "").lower()
+            if ch_id_low in cand_id or cand_id in ch_id_low:
+                return c
+            if ch_id_low in cand_name or cand_name in ch_id_low:
+                return c
+        return channels[0]
+
+    def _match_mix(self, m_id: str, mixes: list) -> dict:
+        if not mixes:
+            return {}
+        if not m_id:
+            return mixes[0]
+        m_id_low = m_id.lower().strip()
+        for m in mixes:
+            if m.get("id") == m_id or m.get("name", "").lower() == m_id_low:
+                return m
+        for m in mixes:
+            cand_id = m.get("id", "").lower()
+            cand_name = m.get("name", "").lower()
+            if m_id_low in cand_id or cand_id in m_id_low:
+                return m
+            if m_id_low in cand_name or cand_name in m_id_low:
+                return m
+        return mixes[0]
+
     def get_target_title_and_subtitle(self) -> tuple:
         ch_id = self.get_configured_channel_id()
         m_id = self.get_configured_mix_id()
@@ -57,27 +93,21 @@ class SubMix(WaveControllerBaseAction):
         channels = data.get("channels", [])
         mixes = data.get("mixes", [])
         
-        ch_name = ch_id.capitalize()
-        for c in channels:
-            if c["id"] == ch_id:
-                ch_name = c.get("name", ch_name)
-                break
+        c = self._match_channel(ch_id, channels)
+        m = self._match_mix(m_id, mixes)
 
-        mix_name = m_id.capitalize()
-        for m in mixes:
-            if m["id"] == m_id:
-                mix_name = m.get("name", mix_name)
-                break
+        ch_name = c.get("name", ch_id.capitalize())
+        mix_name = m.get("name", m_id.capitalize())
 
         return ch_name, mix_name
 
     def get_target_icon_path(self) -> str:
         ch_id = self.get_configured_channel_id()
         data = self.client.get_channels_and_mixes()
-        for c in data.get("channels", []):
-            if c.get("id") == ch_id:
-                if c.get("icon"):
-                    return c.get("icon")
+        channels = data.get("channels", [])
+        c = self._match_channel(ch_id, channels)
+        if c.get("icon"):
+            return c.get("icon")
         
         assigned_map = data.get("assigned_apps", {})
         apps = assigned_map.get(ch_id, [])

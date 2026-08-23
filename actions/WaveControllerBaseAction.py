@@ -62,6 +62,8 @@ class WaveControllerBaseAction(ActionBase):
         self._peak_hold_time = 0.0
         self._last_volume_adjust_time = 0.0
         self._last_drawn_adjusting = False
+        self.last_drawn_title = None
+        self.last_drawn_icon = None
 
         # Pre-computed geometry constants
         self._cx = 70 * RENDER_SCALE
@@ -750,7 +752,17 @@ class WaveControllerBaseAction(ActionBase):
         mute_changed = (self.last_mute != self.last_drawn_mute)
         peak_changed = (abs(peak - self.last_drawn_peak) > 0.012) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
         
-        if force or vol_changed or mute_changed or adjust_changed or (peak_changed and not is_adjusting):
+        settings = self.get_settings() or {}
+        custom_name = settings.get("custom_name", "")
+        custom_icon = settings.get("custom_icon", "")
+        target_title, _ = self.get_target_title_and_subtitle()
+        title_text = custom_name if custom_name else target_title
+        effective_icon = custom_icon if custom_icon else self.get_target_icon_path()
+        
+        title_changed = (title_text != getattr(self, "last_drawn_title", None))
+        icon_changed = (effective_icon != getattr(self, "last_drawn_icon", None))
+        
+        if force or vol_changed or mute_changed or adjust_changed or title_changed or icon_changed or (peak_changed and not is_adjusting):
             with self._render_lock:
                 self._last_render_time = now
                 self.last_drawn_volume = self.current_volume
@@ -758,6 +770,8 @@ class WaveControllerBaseAction(ActionBase):
                 self.last_drawn_peak = peak
                 self.last_drawn_hold = self._peak_hold_val
                 self._last_drawn_adjusting = is_adjusting
+                self.last_drawn_title = title_text
+                self.last_drawn_icon = effective_icon
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
                 try:

@@ -38,18 +38,34 @@ class MixMaster(WaveControllerBaseAction):
         self.current_volume = int(vol) if vol is not None else 100
         self.last_mute = bool(muted) if muted is not None else False
 
+    def _match_mix(self, m_id: str, mixes: list) -> dict:
+        if not mixes:
+            return {}
+        if not m_id:
+            return mixes[0]
+        m_id_low = m_id.lower().strip()
+        # 1. Exact match by id or name
+        for m in mixes:
+            if m.get("id") == m_id or m.get("name", "").lower() == m_id_low:
+                return m
+        # 2. Fuzzy / prefix / suffix match (e.g. "personal_mix" matches "personal", "personal" matches "personal_mix")
+        for m in mixes:
+            cand_id = m.get("id", "").lower()
+            cand_name = m.get("name", "").lower()
+            if m_id_low in cand_id or cand_id in m_id_low:
+                return m
+            if m_id_low in cand_name or cand_name in m_id_low:
+                return m
+        return mixes[0]
+
     def get_target_title_and_subtitle(self) -> tuple:
         m_id = self.get_configured_mix_id()
         data = self.client.get_channels_and_mixes()
         mixes = data.get("mixes", [])
+        m = self._match_mix(m_id, mixes)
         
-        mix_name = m_id.capitalize()
-        target_dev = "none"
-        for m in mixes:
-            if m["id"] == m_id:
-                mix_name = m.get("name", mix_name)
-                target_dev = m.get("target_device", "none")
-                break
+        mix_name = m.get("name", m_id.capitalize())
+        target_dev = m.get("target_device", "none")
 
         # Resolve target device display name
         dev_display = "Output"
@@ -65,10 +81,10 @@ class MixMaster(WaveControllerBaseAction):
     def get_target_icon_path(self) -> str:
         m_id = self.get_configured_mix_id()
         data = self.client.get_channels_and_mixes()
-        for m in data.get("mixes", []):
-            if m.get("id") == m_id:
-                if m.get("icon"):
-                    return m.get("icon")
+        mixes = data.get("mixes", [])
+        m = self._match_mix(m_id, mixes)
+        if m.get("icon"):
+            return m.get("icon")
         return "audio-headphones-symbolic"
 
     def handle_volume_change(self, delta: int):

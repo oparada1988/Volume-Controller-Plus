@@ -36,24 +36,38 @@ class ChannelMaster(WaveControllerBaseAction):
                 ch = "mic"
         return ch
 
+    def _match_channel(self, ch_id: str, channels: list) -> dict:
+        if not channels:
+            return {}
+        if not ch_id:
+            return channels[0]
+        ch_id_low = ch_id.lower().strip()
+        for c in channels:
+            if c.get("id") == ch_id or c.get("name", "").lower() == ch_id_low:
+                return c
+        for c in channels:
+            cand_id = c.get("id", "").lower()
+            cand_name = c.get("name", "").lower()
+            if ch_id_low in cand_id or cand_id in ch_id_low:
+                return c
+            if ch_id_low in cand_name or cand_name in ch_id_low:
+                return c
+        return channels[0]
+
     def get_target_title_and_subtitle(self) -> tuple:
-        settings = self.get_settings() or {}
         ch_id = self.get_configured_channel_id()
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
-        
-        for c in channels:
-            if c["id"] == ch_id:
-                return c.get("name", ch_id.capitalize()), "Master"
-        return ch_id.capitalize(), "Master"
+        c = self._match_channel(ch_id, channels)
+        return c.get("name", ch_id.capitalize()), "Master"
 
     def get_target_icon_path(self) -> str:
         ch_id = self.get_configured_channel_id()
         data = self.client.get_channels_and_mixes()
-        for c in data.get("channels", []):
-            if c.get("id") == ch_id:
-                if c.get("icon"):
-                    return c.get("icon")
+        channels = data.get("channels", [])
+        c = self._match_channel(ch_id, channels)
+        if c.get("icon"):
+            return c.get("icon")
         
         assigned_map = data.get("assigned_apps", {})
         apps = assigned_map.get(ch_id, [])
