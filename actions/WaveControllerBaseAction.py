@@ -178,7 +178,7 @@ class WaveControllerBaseAction(ActionBase):
         elif event == Input.Dial.Events.TURN_CCW:
             step_val = self.get_step_size()
             self.handle_volume_change(-step_val)
-        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_UP, Input.Dial.Events.SHORT_TOUCH_PRESS):
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS):
             self.handle_mute_toggle()
         elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
             getattr(Input.Touchscreen.Events, "SHORT_PRESS", None),

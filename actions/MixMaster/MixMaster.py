@@ -101,7 +101,7 @@ class MixMaster(WaveControllerBaseAction):
         elif event == Input.Dial.Events.TURN_CCW:
             step_val = self.get_step_size()
             self.handle_volume_change(-step_val)
-        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_UP, Input.Dial.Events.SHORT_TOUCH_PRESS):
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS):
             self.handle_mute_toggle()
         elif event == Input.Dial.Events.LONG_TOUCH_PRESS:
             self.handle_cycle_device()
