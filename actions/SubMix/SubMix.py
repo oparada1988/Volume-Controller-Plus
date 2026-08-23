@@ -1,0 +1,261 @@
+import os
+import time
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw
+
+from ..WaveControllerBaseAction import WaveControllerBaseAction
+
+class SubMix(WaveControllerBaseAction):
+    """
+    Sub-Mix Fader Action.
+    Controls a specific audio channel's independent send level & mute state
+    within a designated virtual mix bus (1:1 with WaveController Matrix Cells).
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mixes_list = []
+        self.channels_list = []
+        self._updating_dropdowns = False
+
+    def get_configured_mix_id(self) -> str:
+        settings = self.get_settings() or {}
+        return settings.get("mix_id", "personal")
+
+    def get_configured_channel_id(self) -> str:
+        settings = self.get_settings() or {}
+        return settings.get("channel_id", "spotify")
+
+    def initial_load_status(self):
+        ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        vol, muted = self.client.get_channel_volume(ch_id, mix_id=m_id)
+        self.current_volume = vol
+        self.last_mute = muted
+
+    def get_target_title_and_subtitle(self) -> tuple:
+        ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        data = self.client.get_channels_and_mixes()
+        channels = data.get("channels", [])
+        mixes = data.get("mixes", [])
+        
+        ch_name = ch_id.capitalize()
+        for c in channels:
+            if c["id"] == ch_id:
+                ch_name = c.get("name", ch_name)
+                break
+
+        mix_name = m_id.capitalize()
+        for m in mixes:
+            if m["id"] == m_id:
+                mix_name = m.get("name", mix_name)
+                break
+
+        return ch_name, mix_name
+
+    def get_target_icon_path(self) -> str:
+        ch_id = self.get_configured_channel_id().lower()
+        if ch_id == "mic" or ch_id == "microphone":
+            return os.path.join(self.plugin_base.PATH, "assets", "input.png")
+        return os.path.join(self.plugin_base.PATH, "assets", "output.png")
+
+    def handle_volume_change(self, delta: int):
+        ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        self.current_volume = max(0, min(100, self.current_volume + delta))
+        self._last_volume_adjust_time = time.time()
+        self.client.set_channel_volume(ch_id, self.current_volume, mix_id=m_id)
+        self.update_ui_rendering(force=True)
+
+    def handle_mute_toggle(self):
+        ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        new_mute = self.client.toggle_channel_mute(ch_id, mix_id=m_id)
+        self.last_mute = new_mute
+        self.update_ui_rendering(force=True)
+
+    def get_current_peak_val(self) -> float:
+        ch_id = self.get_configured_channel_id()
+        peaks = self.client.get_peaks()
+        ch_peaks = peaks.get(ch_id, [0.0, 0.0])
+        if isinstance(ch_peaks, (list, tuple)) and len(ch_peaks) >= 2:
+            return max(float(ch_peaks[0]), float(ch_peaks[1]))
+        elif isinstance(ch_peaks, (int, float)):
+            return float(ch_peaks)
+        return 0.0
+
+    def update_dropdowns(self):
+        if not hasattr(self, "mix_selector") or not hasattr(self, "channel_selector"):
+            return
+        self._updating_dropdowns = True
+        try:
+            settings = self.get_settings() or {}
+            data = self.client.get_channels_and_mixes(force=True)
+            channels = data.get("channels", [])
+            mixes = data.get("mixes", [])
+
+            # 1. Populate Mixes
+            self.mixes_list = []
+            if mixes:
+                for m in mixes:
+                    self.mixes_list.append((m["id"], m.get("name", m["id"].capitalize())))
+            else:
+                self.mixes_list = [("personal", "Personal Mix"), ("stream", "Stream Mix")]
+
+            self.mix_model = Gtk.StringList()
+            for _, display_name in self.mixes_list:
+                self.mix_model.append(display_name)
+            self.mix_selector.set_model(self.mix_model)
+
+            current_mix = settings.get("mix_id", "personal")
+            mix_idx = 0
+            for idx, (mid, _) in enumerate(self.mixes_list):
+                if mid == current_mix:
+                    mix_idx = idx
+                    break
+            self.mix_selector.set_selected(mix_idx)
+
+            # 2. Populate Channels
+            self.channels_list = []
+            if channels:
+                for c in channels:
+                    self.channels_list.append((c["id"], c.get("name", c["id"].capitalize())))
+            else:
+                self.channels_list = [("spotify", "Spotify"), ("discord", "Voice Chat"), ("games", "Game Audio"), ("mic", "Microphone")]
+
+            self.channel_model = Gtk.StringList()
+            for _, display_name in self.channels_list:
+                self.channel_model.append(display_name)
+            self.channel_selector.set_model(self.channel_model)
+
+            current_ch = settings.get("channel_id", "spotify")
+            ch_idx = 0
+            for idx, (cid, _) in enumerate(self.channels_list):
+                if cid == current_ch:
+                    ch_idx = idx
+                    break
+            self.channel_selector.set_selected(ch_idx)
+        finally:
+            self._updating_dropdowns = False
+
+    def _on_mix_selected(self, combo, *args):
+        if self._updating_dropdowns:
+            return
+        selected_idx = combo.get_selected()
+        if 0 <= selected_idx < len(self.mixes_list):
+            m_id, m_name = self.mixes_list[selected_idx]
+            settings = self.get_settings() or {}
+            settings["mix_id"] = m_id
+            settings["mix_name"] = m_name
+            self.set_settings(settings)
+            self._cached_midground = None
+            self.initial_load_status()
+            self.update_ui_rendering(force=True)
+
+    def _on_channel_selected(self, combo, *args):
+        if self._updating_dropdowns:
+            return
+        selected_idx = combo.get_selected()
+        if 0 <= selected_idx < len(self.channels_list):
+            ch_id, ch_name = self.channels_list[selected_idx]
+            settings = self.get_settings() or {}
+            settings["channel_id"] = ch_id
+            settings["channel_name"] = ch_name
+            self.set_settings(settings)
+            self._cached_midground = None
+            self.initial_load_status()
+            self.update_ui_rendering(force=True)
+
+    def get_config_rows(self) -> "list[Adw.PreferencesRow]":
+        settings = self.get_settings() or {}
+        vol_format = settings.get("volume_format", "percent")
+
+        # 1. Mix Selector (Personal Mix, Stream Mix, etc.)
+        self.mix_model = Gtk.StringList()
+        self.mix_selector = Adw.ComboRow(
+            model=self.mix_model,
+            title="Target Mix Bus"
+        )
+        self.mix_selector.connect("notify::selected", self._on_mix_selected)
+
+        # 2. Channel Selector (Spotify, Discord, Microphone, etc.)
+        self.channel_model = Gtk.StringList()
+        self.channel_selector = Adw.ComboRow(
+            model=self.channel_model,
+            title="Audio Channel"
+        )
+        self.channel_selector.connect("notify::selected", self._on_channel_selected)
+        self.update_dropdowns()
+
+        # 3. Custom Label
+        self.custom_name_row = Adw.EntryRow(
+            title="Custom Label",
+            text=settings.get("custom_name", "")
+        )
+        def on_name_changed(entry, *args):
+            s = self.get_settings() or {}
+            s["custom_name"] = entry.get_text().strip()
+            self.set_settings(s)
+            self._cached_midground = None
+            self.update_ui_rendering(force=True)
+        self.custom_name_row.connect("notify::text", on_name_changed)
+
+        # 4. Volume Step Size
+        self.step_model = Gtk.StringList()
+        step_sizes = ["1%", "2%", "5%", "10%"]
+        for size in step_sizes:
+            self.step_model.append(size)
+        self.step_selector = Adw.ComboRow(
+            model=self.step_model,
+            title="Volume Step Size"
+        )
+        curr_step = f"{self.get_step_size()}%"
+        self.step_selector.set_selected(step_sizes.index(curr_step) if curr_step in step_sizes else 2)
+        def on_step_changed(combo, *args):
+            s = self.get_settings() or {}
+            idx = combo.get_selected()
+            if 0 <= idx < len(step_sizes):
+                s["step_size"] = step_sizes[idx]
+                self.set_settings(s)
+        self.step_selector.connect("notify::selected", on_step_changed)
+
+        # 5. Volume Format
+        self.vol_format_model = Gtk.StringList()
+        self.vol_format_model.append("Percentage (%)")
+        self.vol_format_model.append("Decibels (dB)")
+        self.vol_format_selector = Adw.ComboRow(
+            model=self.vol_format_model,
+            title="Volume Display Format"
+        )
+        self.vol_format_selector.set_selected(0 if vol_format == "percent" else 1)
+        def on_format_changed(combo, *args):
+            s = self.get_settings() or {}
+            s["volume_format"] = "percent" if combo.get_selected() == 0 else "db"
+            self.set_settings(s)
+            self._cached_midground = None
+            self.update_ui_rendering(force=True)
+        self.vol_format_selector.connect("notify::selected", on_format_changed)
+
+        # 6. Live Peak Meter Toggle
+        self.live_meter_row = Adw.SwitchRow(
+            title="Live Peak Meter"
+        )
+        self.live_meter_row.set_active(settings.get("live_meter", True))
+        def on_meter_toggled(switch, *args):
+            s = self.get_settings() or {}
+            s["live_meter"] = switch.get_active()
+            self.set_settings(s)
+            self._cached_midground = None
+            self.update_ui_rendering(force=True)
+        self.live_meter_row.connect("notify::active", on_meter_toggled)
+
+        return [
+            self.mix_selector,
+            self.channel_selector,
+            self.custom_name_row,
+            self.step_selector,
+            self.vol_format_selector,
+            self.live_meter_row
+        ]

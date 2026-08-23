@@ -1,0 +1,609 @@
+# Import StreamController modules
+from src.backend.PluginManager.ActionBase import ActionBase
+from src.backend.DeckManagement.InputIdentifier import Input, InputEvent
+from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
+
+# Import python modules
+import os
+import time
+import math
+import threading
+from PIL import Image, ImageDraw, ImageFont
+
+# Import gtk modules
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, GLib
+
+from .WaveControllerClient import WaveControllerClient
+
+RENDER_SCALE = 2
+
+class WaveControllerBaseAction(ActionBase):
+    """
+    Base Action maintaining the exact intact visual widget rendering engine:
+    9-tick radial knob, volume arcs, mute border, peak bars, and dual-meter styling.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.client = WaveControllerClient.get_instance()
+        self.running = False
+        self.current_volume = 80
+        self.last_mute = False
+        self.bg_image = None
+        self.tick_timer_id = 0
+        self.last_poll_time = 0.0
+        self.last_drawn_volume = -1
+        self.last_drawn_mute = None
+        self.last_drawn_peak = -1.0
+        self.last_drawn_hold = -1.0
+        self._gauge_gradient_img = None
+        self._gauge_gradient_img_sub = None
+        self._render_lock = threading.RLock()
+        
+        # Cached resources for performance
+        self._cached_font_title = None
+        self._cached_font_vol = None
+        self._cached_font_name = None
+        self._cached_font_path = None
+        self._cached_icon_path = None
+        self._cached_icon_img = None
+        self._cached_font_file = None
+        self._cached_title_font_size = 14
+        self._cached_base_bg = None
+        self._cached_midground = None
+        self._cached_midground_key = None
+        self._current_peak = 0.0
+        self._peak_hold = 0.0
+        self._peak_hold_time = 0.0
+        self._last_volume_adjust_time = 0.0
+
+        self._resolved_title_text = None
+        self._resolved_font_title = None
+        self._last_title_text = None
+        self._last_font_file = None
+        self._last_font_name = None
+        self._last_font_path = None
+        self._last_title_font_size = None
+        self._last_max_width = None
+
+        # Pre-computed geometry constants for peak performance
+        self._cx = 70 * RENDER_SCALE
+        self._cy = 104 * RENDER_SCALE
+        self._r_outer = 44 * RENDER_SCALE
+        self._r_inner = 39 * RENDER_SCALE
+        self._r_arc_box = 51 * RENDER_SCALE
+        self._arc_w = 7 * RENDER_SCALE
+        self._r_arc_center = self._r_arc_box - self._arc_w / 2.0
+        self._cap_r = self._arc_w / 2.0
+        self._bbox = [(self._cx - self._r_arc_box, self._cy - self._r_arc_box), (self._cx + self._r_arc_box, self._cy + self._r_arc_box)]
+        self._bbox_outer = [(self._cx - self._r_outer, self._cy - self._r_outer), (self._cx + self._r_outer, self._cy + self._r_outer)]
+        self._bbox_inner = [(self._cx - self._r_inner, self._cy - self._r_inner), (self._cx + self._r_inner, self._cy + self._r_inner)]
+
+        # Pre-compute fixed 210-degree start cap coordinates
+        rad_start = math.radians(210)
+        self._cos_210 = math.cos(rad_start)
+        self._sin_210 = math.sin(rad_start)
+        self._start_cap_x = self._cx + self._r_arc_center * self._cos_210
+        self._start_cap_y = self._cy + self._r_arc_center * self._sin_210
+
+        self._gx1 = self._cx - self._r_arc_box - 8 * RENDER_SCALE
+        self._gy1 = self._cy - self._r_arc_box - 8 * RENDER_SCALE
+        self._gx2 = self._cx + self._r_arc_box + 8 * RENDER_SCALE
+        self._gy2 = self._cy + 8 * RENDER_SCALE
+
+    def on_ready(self) -> None:
+        self.running = True
+        self.initial_load_status()
+        self.update_ui_rendering(force=True)
+
+        if self.tick_timer_id == 0:
+            self.tick_timer_id = GLib.timeout_add(30, self.on_tick_update)
+
+    def on_update(self) -> None:
+        self.initial_load_status()
+        self.update_ui_rendering(force=True)
+
+    def on_remove(self) -> None:
+        self.running = False
+        if self.tick_timer_id > 0:
+            try:
+                GLib.source_remove(self.tick_timer_id)
+            except Exception:
+                pass
+            self.tick_timer_id = 0
+
+    def on_disconnect(self) -> None:
+        self.on_remove()
+
+    def on_removed_from_cache(self) -> None:
+        self.on_remove()
+
+    # Subclasses MUST override these target hooks
+    def initial_load_status(self):
+        pass
+
+    def get_target_title_and_subtitle(self) -> tuple:
+        return "WaveController", ""
+
+    def get_target_icon_path(self) -> str:
+        return ""
+
+    def handle_volume_change(self, delta: int):
+        pass
+
+    def handle_mute_toggle(self):
+        pass
+
+    def get_current_peak_val(self) -> float:
+        return 0.0
+
+    def get_step_size(self) -> int:
+        settings = self.get_settings() or {}
+        step_str = settings.get("step_size", "5%")
+        try:
+            return int(step_str.replace("%", "").strip())
+        except (ValueError, AttributeError):
+            return 5
+
+    def get_live_meter(self) -> bool:
+        settings = self.get_settings() or {}
+        return settings.get("live_meter", True)
+
+    def event_callback(self, event: InputEvent, data: dict = None):
+        if event == Input.Dial.Events.TURN:
+            step_val = self.get_step_size()
+            steps = data.get("steps", 0)
+            delta = steps * step_val
+            if delta != 0:
+                self.handle_volume_change(delta)
+        elif event in (Input.Dial.Events.SHORT_PRESS, Input.Dial.Events.DOWN):
+            self.handle_mute_toggle()
+        elif event in (Input.Touchscreen.Events.SHORT_PRESS, Input.Touchscreen.Events.TAP):
+            self.handle_mute_toggle()
+
+    def on_tick_update(self) -> bool:
+        if not self.running:
+            return False
+
+        now = time.time()
+        # Refresh volume & mute state every 400ms from WaveController IPC
+        if now - self.last_poll_time > 0.4:
+            self.last_poll_time = now
+            self.initial_load_status()
+
+        # Update live VU peak
+        if self.get_live_meter() and not self.last_mute:
+            raw_peak = self.get_current_peak_val()
+            smooth_decay = 0.85
+            self._current_peak = max(raw_peak, self._current_peak * smooth_decay)
+            
+            # Peak hold marker decay
+            if self._current_peak >= self._peak_hold:
+                self._peak_hold = self._current_peak
+                self._peak_hold_time = now
+            elif (now - self._peak_hold_time) > 1.2:
+                self._peak_hold = max(self._current_peak, self._peak_hold - 0.04)
+
+            self.update_ui_rendering(peak=self._current_peak)
+        else:
+            self.update_ui_rendering(peak=0.0)
+
+        return True
+
+    def _get_gauge_gradient_image(self, width: int, height: int, bbox: list) -> Image.Image:
+        with self._render_lock:
+            if self._gauge_gradient_img is not None:
+                return self._gauge_gradient_img
+                
+            grad_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            grad_draw = ImageDraw.Draw(grad_img)
+            arc_w = int(7 * RENDER_SCALE)
+            
+            for angle in range(210, 330):
+                pct = (angle - 210) / 120.0
+                if pct < 0.65:
+                    r_col, g_col, b_col = 61, 179, 86
+                elif pct < 0.85:
+                    t = (pct - 0.65) / 0.20
+                    r_col = int(61 + (235 - 61) * t)
+                    g_col = int(179 + (210 - 179) * t)
+                    b_col = int(86 * (1 - t))
+                else:
+                    t = (pct - 0.85) / 0.15
+                    r_col = int(235 + (255 - 235) * t)
+                    g_col = int(210 - (210 - 50) * t)
+                    b_col = 0
+                    
+                grad_draw.arc(bbox, start=angle, end=angle+2, fill=(r_col, g_col, b_col, 255), width=arc_w)
+                
+            # Seamless rounded caps on gradient
+            r_arc_box = (bbox[1][0] - bbox[0][0]) / 2.0
+            r_arc_center = r_arc_box - arc_w / 2.0
+            cap_r = arc_w / 2.0
+            cx_arc = (bbox[0][0] + bbox[1][0]) / 2.0
+            cy_arc = (bbox[0][1] + bbox[1][1]) / 2.0
+            
+            rad_start = math.radians(210)
+            xs = cx_arc + r_arc_center * math.cos(rad_start)
+            ys = cy_arc + r_arc_center * math.sin(rad_start)
+            grad_draw.ellipse([(xs - cap_r, ys - cap_r), (xs + cap_r, ys + cap_r)], fill=(61, 179, 86, 255))
+            
+            rad_end = math.radians(330)
+            xe = cx_arc + r_arc_center * math.cos(rad_end)
+            ye = cy_arc + r_arc_center * math.sin(rad_end)
+            grad_draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 50, 0, 255))
+                
+            self._gauge_gradient_img = grad_img
+            return self._gauge_gradient_img
+
+    def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
+        width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE
+        
+        # 1. Base Background with Ticks & Gauge Track
+        if self._cached_base_bg is None:
+            bg_path = os.path.join(self.plugin_base.PATH, "assets", "background-volume.png")
+            try:
+                self.bg_image = Image.open(bg_path).convert("RGBA")
+            except Exception:
+                pass
+                    
+            if self.bg_image is not None:
+                bg = self.bg_image.resize((width, height), Image.Resampling.LANCZOS)
+            else:
+                bg = Image.new("RGBA", (width, height), (30, 30, 32, 255))
+                
+            bg_draw = ImageDraw.Draw(bg)
+            
+            # Pre-render Ticks (5 Major tall ticks, 4 Minor short ticks)
+            cx_bg, cy_bg = 70 * RENDER_SCALE, 104 * RENDER_SCALE
+            tick_angles = [210, 225, 240, 255, 270, 285, 300, 315, 330]
+            r_major_start = 54 * RENDER_SCALE
+            r_major_end = 63 * RENDER_SCALE
+            r_minor_start = 56 * RENDER_SCALE
+            r_minor_end = 61 * RENDER_SCALE
+
+            for i, t_angle in enumerate(tick_angles):
+                rad = math.radians(t_angle)
+                if i % 2 == 0:
+                    r_start = r_major_start
+                    r_end = r_major_end
+                    tick_w = int(2 * RENDER_SCALE)
+                    tick_color = (150, 152, 160, 255)
+                else:
+                    r_start = r_minor_start
+                    r_end = r_minor_end
+                    tick_w = int(1.5 * RENDER_SCALE)
+                    tick_color = (105, 107, 115, 255)
+
+                x1 = cx_bg + r_start * math.cos(rad)
+                y1 = cy_bg + r_start * math.sin(rad)
+                x2 = cx_bg + r_end * math.cos(rad)
+                y2 = cy_bg + r_end * math.sin(rad)
+                bg_draw.line([(x1, y1), (x2, y2)], fill=tick_color, width=tick_w)
+                
+            # Pre-render Gauge Track
+            r_arc_box = 51 * RENDER_SCALE
+            arc_w = 7 * RENDER_SCALE
+            r_arc_center = r_arc_box - arc_w / 2.0
+            cap_r = arc_w / 2.0
+            bbox_bg = [(cx_bg - r_arc_box, cy_bg - r_arc_box), (cx_bg + r_arc_box, cy_bg + r_arc_box)]
+
+            track_color = (20, 20, 24, 255)
+            bg_draw.arc(bbox_bg, start=210, end=330, fill=track_color, width=arc_w)
+            for cap_angle in (210, 330):
+                rad_cap = math.radians(cap_angle)
+                xc = cx_bg + r_arc_center * math.cos(rad_cap)
+                yc = cy_bg + r_arc_center * math.sin(rad_cap)
+                bg_draw.ellipse([(xc - cap_r, yc - cap_r), (xc + cap_r, yc + cap_r)], fill=track_color)
+            
+            self._cached_base_bg = bg
+
+        # 2. Resolve Labels, Fonts & Cache Keys
+        settings = self.get_settings() or {}
+        volume_format = settings.get("volume_format", "percent")
+        custom_name = settings.get("custom_name", "")
+        custom_icon_path = settings.get("custom_icon", "")
+        
+        target_title, target_subtitle = self.get_target_title_and_subtitle()
+        title_text = custom_name if custom_name else target_title
+        
+        effective_icon_path = custom_icon_path if custom_icon_path else self.get_target_icon_path()
+        font_name = settings.get("font_name", "DejaVu Sans Bold 15")
+        font_path = settings.get("font_path", "")
+
+        midground_key = (
+            volume,
+            is_muted,
+            title_text,
+            effective_icon_path,
+            volume_format,
+            font_name,
+            font_path
+        )
+
+        cx, cy = 70 * RENDER_SCALE, 104 * RENDER_SCALE
+        r_outer = 44 * RENDER_SCALE
+        r_inner = 39 * RENDER_SCALE
+        r_arc_box = 51 * RENDER_SCALE
+        arc_w = 7 * RENDER_SCALE
+        r_arc_center = r_arc_box - arc_w / 2.0
+        cap_r = arc_w / 2.0
+        bbox = [(cx - r_arc_box, cy - r_arc_box), (cx + r_arc_box, cy + r_arc_box)]
+        bbox_outer = [(cx - r_outer, cy - r_outer), (cx + r_outer, cy + r_outer)]
+        bbox_inner = [(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)]
+        start_cap_x = self._start_cap_x
+        start_cap_y = self._start_cap_y
+
+        # Build Midground Card (Text, Icon, Inner Knob)
+        if self._cached_midground is None or self._cached_midground_key != midground_key:
+            mid_img = self._cached_base_bg.copy()
+            mid_draw = ImageDraw.Draw(mid_img)
+
+            # Draw Volume Text (MUTE in red when muted, volume % / dB when unmuted)
+            if is_muted:
+                vol_text = "MUTE"
+                vol_color = (239, 68, 68, 255)
+            elif volume_format == "db":
+                if volume <= 0:
+                    vol_text = "-inf dB"
+                elif volume >= 100:
+                    vol_text = "0.0 dB"
+                else:
+                    db_val = 20.0 * math.log10(max(1, volume) / 100.0)
+                    vol_text = f"{db_val:.1f} dB"
+                vol_color = (255, 255, 255, 255)
+            else:
+                vol_text = f"{volume}%"
+                vol_color = (255, 255, 255, 255)
+            
+            # Resolve fonts
+            title_font_size = 14
+            font_file = None
+            if font_name:
+                import re
+                match = re.search(r'\s+(\d+)$', font_name.strip())
+                if match:
+                    title_font_size = int(match.group(1))
+                font_file = self.font_name_to_path(font_name)
+                    
+            if not font_file and font_path and os.path.exists(font_path):
+                font_file = font_path
+                
+            if not font_file:
+                for path in [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                ]:
+                    if os.path.exists(path):
+                        font_file = path
+                        break
+                        
+            vol_font_file = None
+            for path in [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"
+            ]:
+                if os.path.exists(path):
+                    vol_font_file = path
+                    break
+                    
+            try:
+                if font_file:
+                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size * RENDER_SCALE)
+                else:
+                    self._cached_font_title = ImageFont.load_default()
+            except Exception:
+                self._cached_font_title = ImageFont.load_default()
+                
+            vol_font_size = 15 if volume_format == "db" else 19
+            try:
+                if vol_font_file:
+                    self._cached_font_vol = ImageFont.truetype(vol_font_file, vol_font_size * RENDER_SCALE)
+                else:
+                    self._cached_font_vol = ImageFont.load_default()
+            except Exception:
+                self._cached_font_vol = ImageFont.load_default()
+
+            font_title = self._cached_font_title
+            font_vol = self._cached_font_vol
+
+            try:
+                mid_draw.text((165 * RENDER_SCALE, 64 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
+            except TypeError:
+                mid_draw.text((int((165 - 20) * RENDER_SCALE), int((64 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
+
+            # Icon Placement
+            icon_drawn = False
+            icon_w = 26
+            if effective_icon_path and os.path.exists(effective_icon_path):
+                if effective_icon_path != self._cached_icon_path or self._cached_icon_img is None:
+                    try:
+                        loaded_img = Image.open(effective_icon_path).convert("RGBA")
+                        orig_w, orig_h = loaded_img.size
+                        target_max = int(27 * RENDER_SCALE)
+                        if orig_w > orig_h:
+                            new_w = target_max
+                            new_h = max(1, int(orig_h * target_max / orig_w))
+                        else:
+                            new_h = target_max
+                            new_w = max(1, int(orig_w * target_max / orig_h))
+                        self._cached_icon_img = loaded_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    except Exception:
+                        self._cached_icon_img = None
+                    self._cached_icon_path = effective_icon_path
+                    
+                if self._cached_icon_img is not None:
+                    icon_img = self._cached_icon_img.copy()
+                    icon_w_unscaled = icon_img.width // RENDER_SCALE
+                    icon_h_unscaled = icon_img.height // RENDER_SCALE
+                    x_start = 12
+                    y_start = 16 - icon_h_unscaled // 2
+                    y_start = max(3, min(y_start, 38 - icon_h_unscaled))
+                    mid_img.paste(icon_img, (x_start * RENDER_SCALE, y_start * RENDER_SCALE), icon_img)
+                    icon_drawn = True
+                    icon_w = icon_w_unscaled
+
+            if not icon_drawn:
+                spk_x, spk_y = 12, 9
+                spk_color = (90, 105, 120, 255) if is_muted else (110, 130, 150, 255)
+                mid_draw.rectangle([
+                    (spk_x * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+                ], fill=spk_color)
+                mid_draw.polygon([
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 4) * RENDER_SCALE), 
+                    ((spk_x + 10) * RENDER_SCALE, (spk_y + 0) * RENDER_SCALE), 
+                    ((spk_x + 10) * RENDER_SCALE, (spk_y + 14) * RENDER_SCALE), 
+                    ((spk_x + 5) * RENDER_SCALE, (spk_y + 10) * RENDER_SCALE)
+                ], fill=spk_color)
+                
+                if is_muted:
+                    mid_draw.line([
+                        ((spk_x - 2) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                        ((spk_x + 16) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                    ], fill=(239, 68, 68, 255), width=2 * RENDER_SCALE)
+                else:
+                    wave_color = (0, 168, 255, 255)
+                    mid_draw.arc([
+                        ((spk_x + 3) * RENDER_SCALE, (spk_y + 2) * RENDER_SCALE), 
+                        ((spk_x + 13) * RENDER_SCALE, (spk_y + 12) * RENDER_SCALE)
+                    ], start=-45, end=45, fill=wave_color, width=2 * RENDER_SCALE)
+
+            # Title Text
+            left_bound = 12 + icon_w + 6
+            right_bound = 195
+            max_width = right_bound - left_bound - 4
+
+            max_width_scaled = max_width * RENDER_SCALE
+            title_text_to_draw = title_text
+
+            try:
+                text_w = font_title.getlength(title_text_to_draw)
+            except Exception:
+                text_w = len(title_text_to_draw) * (title_font_size * RENDER_SCALE * 0.6)
+
+            current_size = title_font_size
+            font_title_to_draw = font_title
+            while text_w > max_width_scaled and current_size > 9:
+                current_size -= 1
+                try:
+                    if font_file:
+                        temp_font = ImageFont.truetype(font_file, current_size * RENDER_SCALE)
+                    else:
+                        temp_font = ImageFont.load_default()
+                    text_w = temp_font.getlength(title_text_to_draw)
+                    font_title_to_draw = temp_font
+                except Exception:
+                    break
+
+            while text_w > max_width_scaled and len(title_text_to_draw) > 3:
+                title_text_to_draw = title_text_to_draw[:-3] + ".."
+                try:
+                    text_w = font_title_to_draw.getlength(title_text_to_draw)
+                except Exception:
+                    break
+            
+            try:
+                mid_draw.text((left_bound * RENDER_SCALE, 16 * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255), anchor="lm")
+            except TypeError:
+                mid_draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255))
+
+            # Inner Knob Core
+            mid_draw.chord(bbox_outer, start=180, end=360, fill=(35, 35, 38, 255))
+            mid_draw.chord(bbox_inner, start=180, end=360, fill=(66, 66, 70, 255))
+            mid_draw.arc(bbox_inner, start=180, end=360, fill=(85, 85, 92, 255), width=1 * RENDER_SCALE)
+
+            self._cached_midground = mid_img
+            self._cached_midground_key = midground_key
+
+        # 3. Dynamic Frame Rendering
+        img = self._cached_midground.copy()
+        draw = ImageDraw.Draw(img)
+        
+        if not is_muted:
+            now = time.time()
+            is_adjusting = (now - self._last_volume_adjust_time) < 1.2
+            
+            if is_adjusting:
+                vol_angle = int(210 + 120 * (volume / 100.0))
+                if vol_angle > 210:
+                    draw.arc(bbox, start=210, end=vol_angle, fill=(255, 255, 255, 255), width=arc_w)
+                    draw.ellipse([(start_cap_x - cap_r, start_cap_y - cap_r), (start_cap_x + cap_r, start_cap_y + cap_r)], fill=(255, 255, 255, 255))
+                    rad_e = math.radians(vol_angle)
+                    xe = cx + r_arc_center * math.cos(rad_e)
+                    ye = cy + r_arc_center * math.sin(rad_e)
+                    draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 255, 255, 255))
+            else:
+                is_live_enabled = settings.get("live_meter", True)
+                if is_live_enabled:
+                    meter_level = max(0.0, min(1.0, peak * (volume / 100.0)))
+                    meter_angle = int(210 + 120 * meter_level)
+                    
+                    if meter_angle > 210:
+                        grad_img = self._get_gauge_gradient_image(width, height, bbox)
+                        mask = Image.new("L", (width, height), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.arc(bbox, start=210, end=meter_angle, fill=255, width=arc_w)
+                        mask_draw.ellipse([(start_cap_x - cap_r, start_cap_y - cap_r), (start_cap_x + cap_r, start_cap_y + cap_r)], fill=255)
+                        rad_m = math.radians(meter_angle)
+                        xm = cx + r_arc_center * math.cos(rad_m)
+                        ym = cy + r_arc_center * math.sin(rad_m)
+                        mask_draw.ellipse([(xm - cap_r, ym - cap_r), (xm + cap_r, ym + cap_r)], fill=255)
+                        img.paste(grad_img, (0, 0), mask)
+                        
+                    # Draw Peak Hold Marker
+                    hold_level = max(0.0, min(1.0, self._peak_hold * (volume / 100.0)))
+                    hold_angle = int(210 + 120 * hold_level)
+                    if hold_angle > 212:
+                        rad_h = math.radians(hold_angle)
+                        xh = cx + r_arc_center * math.cos(rad_h)
+                        yh = cy + r_arc_center * math.sin(rad_h)
+                        draw.ellipse([(xh - cap_r * 0.8, yh - cap_r * 0.8), (xh + cap_r * 0.8, yh + cap_r * 0.8)], fill=(255, 255, 255, 230))
+                else:
+                    vol_angle = int(210 + 120 * (volume / 100.0))
+                    if vol_angle > 210:
+                        draw.arc(bbox, start=210, end=vol_angle, fill=(0, 168, 255, 255), width=arc_w)
+                        rad_e = math.radians(vol_angle)
+                        xe = cx + r_arc_center * math.cos(rad_e)
+                        ye = cy + r_arc_center * math.sin(rad_e)
+                        draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(0, 168, 255, 255))
+        else:
+            # Red Muted Perimeter Border
+            draw.rectangle([(0, 0), (width - 1, height - 1)], outline=(239, 68, 68, 255), width=int(2 * RENDER_SCALE))
+
+        return img
+
+    def update_ui_rendering(self, peak: float = 0.0, force: bool = False):
+        now = time.time()
+        is_adjusting = (now - self._last_volume_adjust_time) < 1.2
+        
+        vol_changed = (self.current_volume != self.last_drawn_volume)
+        mute_changed = (self.last_mute != self.last_drawn_mute)
+        peak_changed = (abs(peak - self.last_drawn_peak) > 0.015) or (abs(self._peak_hold - self.last_drawn_hold) > 0.02)
+        
+        if force or vol_changed or mute_changed or (peak_changed and not is_adjusting):
+            self.last_drawn_volume = self.current_volume
+            self.last_drawn_mute = self.last_mute
+            self.last_drawn_peak = peak
+            self.last_drawn_hold = self._peak_hold
+            
+            img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
+            try:
+                self.set_media(image=img)
+            except Exception:
+                pass
+
+    def font_name_to_path(self, font_name: str) -> str:
+        """Resolves system font name to font file path via fc-match."""
+        import subprocess
+        try:
+            name_only = font_name.split()[0]
+            out = subprocess.check_output(["fc-match", "-f", "%{file}", name_only], text=True, stderr=subprocess.DEVNULL)
+            if out and os.path.exists(out.strip()):
+                return out.strip()
+        except Exception:
+            pass
+        return ""

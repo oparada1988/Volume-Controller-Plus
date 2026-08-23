@@ -11,32 +11,60 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
 # Import actions
+from .actions.ChannelMaster.ChannelMaster import ChannelMaster
+from .actions.SubMix.SubMix import SubMix
+from .actions.MixMaster.MixMaster import MixMaster
 from .actions.VolumeControl.VolumeControl import VolumeControl
 
 class PluginTemplate(PluginBase):
     def __init__(self):
         super().__init__()
 
-        ## Register actions
-        self.volume_control_holder = ActionHolder(
+        icon_img = Gtk.Image(file=os.path.join(self.PATH, "assets", "Action_icon.png"))
+        supported_inputs = {
+            Input.Key: ActionInputSupport.UNSUPPORTED,
+            Input.Dial: ActionInputSupport.SUPPORTED,
+            Input.Touchscreen: ActionInputSupport.SUPPORTED
+        }
+
+        # 1. Channel Master Action
+        self.channel_master_holder = ActionHolder(
             plugin_base = self,
-            action_base = VolumeControl,
-            action_id = "com_oparada_VolumeControllerPlus::VolumeControl",
-            action_name = "Volume Controller Plus",
-            icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "Action_icon.png")),
-            action_support = {
-                Input.Key: ActionInputSupport.UNSUPPORTED,
-                Input.Dial: ActionInputSupport.SUPPORTED,
-                Input.Touchscreen: ActionInputSupport.SUPPORTED
-            }
+            action_base = ChannelMaster,
+            action_id = "com_oparada_WaveControllerPlugin::ChannelMaster",
+            action_name = "Channel Fader",
+            icon = icon_img,
+            action_support = supported_inputs
         )
-        self.add_action_holder(self.volume_control_holder)
+        self.add_action_holder(self.channel_master_holder)
+
+        # 2. Sub-Mix Fader Action
+        self.sub_mix_holder = ActionHolder(
+            plugin_base = self,
+            action_base = SubMix,
+            action_id = "com_oparada_WaveControllerPlugin::SubMix",
+            action_name = "Sub-Mix Fader",
+            icon = icon_img,
+            action_support = supported_inputs
+        )
+        self.add_action_holder(self.sub_mix_holder)
+
+        # 3. Mix Master Output Action
+        self.mix_master_holder = ActionHolder(
+            plugin_base = self,
+            action_base = MixMaster,
+            action_id = "com_oparada_WaveControllerPlugin::MixMaster",
+            action_name = "Mix Master Output",
+            icon = icon_img,
+            action_support = supported_inputs
+        )
+        self.add_action_holder(self.mix_master_holder)
 
         # Register plugin
         self.register(
-            plugin_name = "Volume Control for Stream Deck Plus",
-            github_repo = "https://github.com/oparada1988/Volume-Controller-Plus",
-            plugin_version = "1.1.2",
+            plugin_name = "WaveController for StreamController",
+            github_repo = "https://github.com/oparada1988/WaveController",
+            plugin_version = "1.0.0",
             app_version = "1.0.0-alpha"
         )
 

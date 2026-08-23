@@ -1,17 +1,17 @@
 {
-    "version": "1.1.2",
+    "version": "1.0.0",
     "thumbnail": "assets/thumbnail.png",
-    "id": "com_oparada_VolumeControllerPlus",
-    "name": "Volume Control for Stream Deck Plus",
+    "id": "com_oparada_WaveControllerPlugin",
+    "name": "WaveController for StreamController",
     "descriptions": {
-        "en_US": "Official-style Volume Controller for Stream Deck Plus, allowing volume adjustment via dials and mute toggle via push/touch."
+        "en_US": "Official WaveController Audio Mixer & Sub-Mix Controller for StreamController, allowing channel, sub-mix, and mix master control via dials and touchscreens."
     },
     "short-descriptions": {
-        "en_US": "Stream Deck Plus Volume Controller"
+        "en_US": "WaveController for StreamController"
     },
     "tags": "Audio",
     "minimum-version": "1.0.0",
     "app-version": "1.0.0-alpha",
-    "description": "Official-style Volume Controller for Stream Deck Plus, allowing volume adjustment via dials and mute toggle via push/touch.",
-    "short-description": "Stream Deck Plus Volume Controller"
+    "description": "Official WaveController Audio Mixer & Sub-Mix Controller for StreamController, allowing channel, sub-mix, and mix master control via dials and touchscreens.",
+    "short-description": "WaveController for StreamController"
 }
