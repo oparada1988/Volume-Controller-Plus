@@ -140,18 +140,24 @@ class WaveControllerClient:
         if mix_id:
             cmd["mix_id"] = mix_id
         res = self.send_command(cmd)
-        if res and "state" in res:
+        if res and "state" in res and res["state"]:
             state = res["state"]
-            return state.get("volume", 80), state.get("muted", False)
+            vol = state.get("volume", 80)
+            muted = state.get("muted", False)
+            return int(vol) if vol is not None else 80, bool(muted) if muted is not None else False
 
         # Fallback to local config
         fallback = self._load_config_fallback()
         if mix_id:
             st = fallback.get("states", {}).get(channel_id, {}).get(mix_id, {})
-            return st.get("volume", 80), st.get("muted", False)
+            vol = st.get("volume", 80)
+            muted = st.get("muted", False)
+            return int(vol) if vol is not None else 80, bool(muted) if muted is not None else False
         else:
             st = fallback.get("master_states", {}).get(channel_id, {})
-            return st.get("volume", 80), st.get("muted", False)
+            vol = st.get("volume", 80)
+            muted = st.get("muted", False)
+            return int(vol) if vol is not None else 80, bool(muted) if muted is not None else False
 
     def set_channel_volume(self, channel_id: str, volume: int, mix_id: str = None, muted: bool = None):
         """Sets channel master volume or submix fader level."""
@@ -168,8 +174,8 @@ class WaveControllerClient:
         if mix_id:
             cmd["mix_id"] = mix_id
         res = self.send_command(cmd)
-        if res and "muted" in res:
-            return res["muted"]
+        if res and "muted" in res and res["muted"] is not None:
+            return bool(res["muted"])
         curr_vol, curr_mute = self.get_channel_volume(channel_id, mix_id=mix_id)
         new_mute = not curr_mute
         self.set_channel_volume(channel_id, curr_vol, mix_id=mix_id, muted=new_mute)
@@ -178,12 +184,14 @@ class WaveControllerClient:
     def get_mix_master_volume(self, mix_id: str) -> tuple:
         """Returns (volume_pct, is_muted) for a mix bus."""
         res = self.send_command({"command": "get_mix_master_volume", "mix_id": mix_id})
-        if res and "volume" in res:
-            return res["volume"], res.get("muted", False)
+        if res and "volume" in res and res["volume"] is not None:
+            return int(res["volume"]), bool(res.get("muted", False))
 
         fallback = self._load_config_fallback()
         st = fallback.get("mix_states", {}).get(mix_id, {})
-        return st.get("volume", 100), st.get("muted", False)
+        vol = st.get("volume", 100)
+        muted = st.get("muted", False)
+        return int(vol) if vol is not None else 100, bool(muted) if muted is not None else False
 
     def set_mix_master_volume(self, mix_id: str, volume: int, muted: bool = None):
         """Sets mix master bus volume."""

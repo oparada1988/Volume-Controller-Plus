@@ -21,8 +21,8 @@ class ChannelMaster(WaveControllerBaseAction):
         settings = self.get_settings() or {}
         ch_id = self.get_configured_channel_id()
         vol, muted = self.client.get_channel_volume(ch_id)
-        self.current_volume = vol
-        self.last_mute = muted
+        self.current_volume = int(vol) if vol is not None else 80
+        self.last_mute = bool(muted) if muted is not None else False
 
     def get_configured_channel_id(self) -> str:
         settings = self.get_settings() or {}
@@ -60,7 +60,8 @@ class ChannelMaster(WaveControllerBaseAction):
 
     def handle_volume_change(self, delta: int):
         ch_id = self.get_configured_channel_id()
-        self.current_volume = max(0, min(100, self.current_volume + delta))
+        curr = self.current_volume if self.current_volume is not None else 80
+        self.current_volume = max(0, min(100, curr + delta))
         self._last_volume_adjust_time = time.time()
         self.client.set_channel_volume(ch_id, self.current_volume)
         self.update_ui_rendering(force=True)

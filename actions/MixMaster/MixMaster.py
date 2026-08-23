@@ -35,8 +35,8 @@ class MixMaster(WaveControllerBaseAction):
     def initial_load_status(self):
         m_id = self.get_configured_mix_id()
         vol, muted = self.client.get_mix_master_volume(m_id)
-        self.current_volume = vol
-        self.last_mute = muted
+        self.current_volume = int(vol) if vol is not None else 100
+        self.last_mute = bool(muted) if muted is not None else False
 
     def get_target_title_and_subtitle(self) -> tuple:
         m_id = self.get_configured_mix_id()
@@ -73,7 +73,8 @@ class MixMaster(WaveControllerBaseAction):
 
     def handle_volume_change(self, delta: int):
         m_id = self.get_configured_mix_id()
-        self.current_volume = max(0, min(100, self.current_volume + delta))
+        curr = self.current_volume if self.current_volume is not None else 100
+        self.current_volume = max(0, min(100, curr + delta))
         self._last_volume_adjust_time = time.time()
         self.client.set_mix_master_volume(m_id, self.current_volume)
         self.update_ui_rendering(force=True)
@@ -205,7 +206,27 @@ class MixMaster(WaveControllerBaseAction):
             self.set_settings(settings)
             self._cached_midground = None
             self.initial_load_status()
-            self.update_dropdowns()
+            
+            # Safely sync target device selection without rebuilding models
+            if hasattr(self, "device_selector") and hasattr(self, "devices_list"):
+                data = self.client.get_channels_and_mixes()
+                mixes = data.get("mixes", [])
+                current_target = "none"
+                for m in mixes:
+                    if m["id"] == m_id:
+                        current_target = m.get("target_device", "none")
+                        break
+                dev_idx = 0
+                for idx, (did, _) in enumerate(self.devices_list):
+                    if did == current_target:
+                        dev_idx = idx
+                        break
+                self._updating_dropdowns = True
+                try:
+                    self.device_selector.set_selected(dev_idx)
+                finally:
+                    self._updating_dropdowns = False
+
             self.update_ui_rendering(force=True)
 
     def _on_device_selected(self, combo, *args):
