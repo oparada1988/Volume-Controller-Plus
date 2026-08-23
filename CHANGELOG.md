@@ -2,6 +2,18 @@
 
 All notable changes to **Volume Controller Plus** will be documented in this file.
 
+## [1.2.0] - 2026-08-23
+
+### 🎛️ WaveController Suite Integration
+- **Three Dedicated Actions**:
+  - `ChannelMaster`: Individual channel master fader with real-time VU peak metering and mute toggle.
+  - `SubMix`: Independent per-mix send level fader (1:1 with WaveController matrix cells) for custom routing into Personal, Chat, and Hardware sub-mixes.
+  - `MixMaster`: Overall virtual mix bus output level controller with physical audio output switching.
+- **Ultra Low-Latency Persistent IPC Socket**: Persistent line-buffered Unix Domain Socket streaming with sub-millisecond query latency and automatic reconnection.
+- **Physical Dial & Touch Interaction**: Fixed `TURN_CW` / `TURN_CCW` event dispatching, tap mute toggling, and swipe/long-press device cycling.
+- **Dynamic Icon Resolution**: Built-in GTK theme symbolic icon rasterizer with fallback to bundled high-DPI assets.
+- **Adwaita Settings Safety**: Protected `Adw.ComboRow` models from recursive re-entrancy crashes during user selection.
+
 ## [1.1.2] - 2026-08-22
 
 ### ⚡ Engine & Peak Monitoring Enhancements
