@@ -48,10 +48,15 @@ class ChannelMaster(WaveControllerBaseAction):
         return ch_id.capitalize(), "Master"
 
     def get_target_icon_path(self) -> str:
-        ch_id = self.get_configured_channel_id().lower()
-        if ch_id in ("mic", "microphone", "fefine", "fifine"):
-            return os.path.join(self.plugin_base.PATH, "assets", "input.png")
-        return os.path.join(self.plugin_base.PATH, "assets", "output.png")
+        ch_id = self.get_configured_channel_id()
+        data = self.client.get_channels_and_mixes()
+        for c in data.get("channels", []):
+            if c.get("id") == ch_id:
+                if c.get("icon"):
+                    return c.get("icon")
+        if ch_id.lower() in ("mic", "microphone", "fefine", "fifine"):
+            return "audio-input-microphone-symbolic"
+        return "audio-volume-high-symbolic"
 
     def handle_volume_change(self, delta: int):
         ch_id = self.get_configured_channel_id()

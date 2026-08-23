@@ -63,7 +63,13 @@ class MixMaster(WaveControllerBaseAction):
         return mix_name, dev_display
 
     def get_target_icon_path(self) -> str:
-        return os.path.join(self.plugin_base.PATH, "assets", "output.png")
+        m_id = self.get_configured_mix_id()
+        data = self.client.get_channels_and_mixes()
+        for m in data.get("mixes", []):
+            if m.get("id") == m_id:
+                if m.get("icon"):
+                    return m.get("icon")
+        return "audio-headphones-symbolic"
 
     def handle_volume_change(self, delta: int):
         m_id = self.get_configured_mix_id()

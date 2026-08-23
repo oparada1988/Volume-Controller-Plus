@@ -7,7 +7,7 @@ import time
 class WaveControllerClient:
     """
     High-Performance Unix Domain Socket IPC Client for WaveController.
-    Connects to $XDG_RUNTIME_DIR/wavecontroller.sock, /run/user/1000/wavecontroller.sock,
+    Connects to ~/.config/WaveController/wavecontroller.sock, $XDG_RUNTIME_DIR/wavecontroller.sock,
     or /tmp/wavecontroller.sock with persistent config.json fallback.
     """
     _instance = None
@@ -21,7 +21,9 @@ class WaveControllerClient:
             return cls._instance
 
     def __init__(self):
-        self.config_path = os.path.expanduser("~/.config/WaveController/config.json")
+        self.config_dir = os.path.expanduser("~/.config/WaveController")
+        self.config_path = os.path.join(self.config_dir, "config.json")
+        self.config_socket_path = os.path.join(self.config_dir, "wavecontroller.sock")
         self._cached_peaks = {}
         self._last_peaks_time = 0.0
         self._cached_channels_data = None
@@ -29,7 +31,7 @@ class WaveControllerClient:
         self._req_lock = threading.Lock()
 
     def _get_socket_paths(self) -> list:
-        paths = []
+        paths = [self.config_socket_path]
         xdg = os.environ.get("XDG_RUNTIME_DIR")
         if xdg:
             paths.append(os.path.join(xdg, "wavecontroller.sock"))
@@ -37,7 +39,7 @@ class WaveControllerClient:
         paths.append("/tmp/wavecontroller.sock")
         return list(dict.fromkeys(paths))
 
-    def send_command(self, cmd_dict: dict, timeout: float = 0.15) -> dict:
+    def send_command(self, cmd_dict: dict, timeout: float = 0.20) -> dict:
         """Sends a JSON command to WaveController and returns the parsed response."""
         with self._req_lock:
             sock = None
@@ -88,7 +90,8 @@ class WaveControllerClient:
                         "states": data.get("channel_states", {}),
                         "master_states": data.get("channel_master_states", {}),
                         "mix_states": data.get("mix_states", {}),
-                        "device_aliases": data.get("device_aliases", {})
+                        "device_aliases": data.get("device_aliases", {}),
+                        "assigned_apps": data.get("assigned_apps", {})
                     }
             except Exception:
                 pass
@@ -97,7 +100,7 @@ class WaveControllerClient:
     def get_channels_and_mixes(self, force: bool = False) -> dict:
         """Queries active channels, mixes, and submix states from WaveController."""
         now = time.time()
-        if not force and self._cached_channels_data and (now - self._last_channels_time < 1.0):
+        if not force and self._cached_channels_data and (now - self._last_channels_time < 0.5):
             return self._cached_channels_data
 
         res = self.send_command({"command": "get_channels"})

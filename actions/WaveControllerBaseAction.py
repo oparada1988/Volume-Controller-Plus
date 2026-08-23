@@ -5,6 +5,7 @@ from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
 
 # Import python modules
 import os
+import io
 import time
 import math
 import threading
@@ -14,7 +15,8 @@ from PIL import Image, ImageDraw, ImageFont
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gtk, Gdk, GdkPixbuf, Adw, GLib
 
 from .WaveControllerClient import WaveControllerClient
 
@@ -59,15 +61,6 @@ class WaveControllerBaseAction(ActionBase):
         self._peak_hold_val = 0.0
         self._peak_hold_time = 0.0
         self._last_volume_adjust_time = 0.0
-
-        self._resolved_title_text = None
-        self._resolved_font_title = None
-        self._last_title_text = None
-        self._last_font_file = None
-        self._last_font_name = None
-        self._last_font_path = None
-        self._last_title_font_size = None
-        self._last_max_width = None
 
         # Pre-computed geometry constants
         self._cx = 70 * RENDER_SCALE
@@ -179,8 +172,8 @@ class WaveControllerBaseAction(ActionBase):
             return False
 
         now = time.time()
-        # Refresh volume & mute state every 300ms from WaveController
-        if now - self.last_poll_time > 0.3:
+        # Fast 80ms poll from WaveController for 1:1 fader responsiveness
+        if now - self.last_poll_time > 0.08:
             self.last_poll_time = now
             self.initial_load_status()
 
@@ -257,6 +250,62 @@ class WaveControllerBaseAction(ActionBase):
             self._gauge_gradient_img_sub = grad_img.crop((self._gx1, self._gy1, self._gx2, self._gy2))
             return self._gauge_gradient_img_sub
 
+    def resolve_icon_as_pil(self, icon_identifier: str, target_size: int = 54) -> Image.Image:
+        """Resolves an icon name or file path to a crisp PIL Image using GTK IconTheme or local assets."""
+        if not icon_identifier:
+            return None
+
+        # 1. Direct valid image file on disk
+        if os.path.exists(icon_identifier):
+            try:
+                if icon_identifier.endswith(".svg"):
+                    pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_identifier, target_size, target_size, True)
+                    ok, buf = pix.save_to_bufferv("png")
+                    return Image.open(io.BytesIO(buf)).convert("RGBA")
+                else:
+                    return Image.open(icon_identifier).convert("RGBA")
+            except Exception:
+                pass
+
+        # 2. Check plugin bundled assets
+        if hasattr(self, "plugin_base") and hasattr(self.plugin_base, "PATH"):
+            for candidate in [
+                icon_identifier,
+                f"{icon_identifier}.png",
+                f"{icon_identifier}.svg",
+                os.path.join("assets", icon_identifier),
+                os.path.join("assets", f"{icon_identifier}.png")
+            ]:
+                asset_file = os.path.join(self.plugin_base.PATH, candidate)
+                if os.path.exists(asset_file):
+                    try:
+                        if asset_file.endswith(".svg"):
+                            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(asset_file, target_size, target_size, True)
+                            ok, buf = pix.save_to_bufferv("png")
+                            return Image.open(io.BytesIO(buf)).convert("RGBA")
+                        else:
+                            return Image.open(asset_file).convert("RGBA")
+                    except Exception:
+                        pass
+
+        # 3. Look up via Freedesktop GTK IconTheme
+        try:
+            display = Gdk.Display.get_default()
+            if display:
+                theme = Gtk.IconTheme.get_for_display(display)
+                if theme.has_icon(icon_identifier):
+                    paintable = theme.lookup_icon(icon_identifier, None, target_size, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
+                    if paintable and paintable.get_file():
+                        path = paintable.get_file().get_path()
+                        if path and os.path.exists(path):
+                            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, target_size, target_size, True)
+                            ok, buf = pix.save_to_bufferv("png")
+                            return Image.open(io.BytesIO(buf)).convert("RGBA")
+        except Exception:
+            pass
+
+        return None
+
     def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
         width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE
         
@@ -328,7 +377,7 @@ class WaveControllerBaseAction(ActionBase):
         target_title, target_subtitle = self.get_target_title_and_subtitle()
         title_text = custom_name if custom_name else target_title
         
-        effective_icon_path = custom_icon_path if custom_icon_path else self.get_target_icon_path()
+        effective_icon_identifier = custom_icon_path if custom_icon_path else self.get_target_icon_path()
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         font_path = settings.get("font_path", "")
 
@@ -336,7 +385,7 @@ class WaveControllerBaseAction(ActionBase):
             volume,
             is_muted,
             title_text,
-            effective_icon_path,
+            effective_icon_identifier,
             volume_format,
             font_name,
             font_path
@@ -365,7 +414,7 @@ class WaveControllerBaseAction(ActionBase):
             mid_img = self._cached_base_bg.copy()
             mid_draw = ImageDraw.Draw(mid_img)
 
-            # Draw Volume Text (MUTE in red when muted, volume % / dB when unmuted)
+            # Draw Volume Text
             if is_muted:
                 vol_text = "MUTE"
                 vol_color = (239, 68, 68, 255)
@@ -382,53 +431,39 @@ class WaveControllerBaseAction(ActionBase):
                 vol_text = f"{volume}%"
                 vol_color = (255, 255, 255, 255)
             
-            # Resolve fonts
-            title_font_size = 14
+            # Resolve bold TrueType font with bundled plugin fonts priority
             font_file = None
-            if font_name:
-                import re
-                match = re.search(r'\s+(\d+)$', font_name.strip())
-                if match:
-                    title_font_size = int(match.group(1))
-                font_file = self.font_name_to_path(font_name)
-                    
-            if not font_file and font_path and os.path.exists(font_path):
+            bundled_bold = os.path.join(self.plugin_base.PATH, "assets", "fonts", "DejaVuSans-Bold.ttf")
+            bundled_regular = os.path.join(self.plugin_base.PATH, "assets", "fonts", "DejaVuSans.ttf")
+            
+            if os.path.exists(bundled_bold):
+                font_file = bundled_bold
+            elif font_path and os.path.exists(font_path):
                 font_file = font_path
-                
-            if not font_file:
+            else:
                 for path in [
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
                 ]:
                     if os.path.exists(path):
                         font_file = path
                         break
-                        
-            vol_font_file = None
-            for path in [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"
-            ]:
-                if os.path.exists(path):
-                    vol_font_file = path
-                    break
-                    
+
+            title_font_size = 14
+            vol_font_size = 15 if volume_format == "db" else 19
+
             try:
                 if font_file:
-                    self._cached_font_title = ImageFont.truetype(font_file, title_font_size * RENDER_SCALE)
+                    self._cached_font_title = ImageFont.truetype(font_file, int(title_font_size * RENDER_SCALE))
+                    self._cached_font_vol = ImageFont.truetype(font_file, int(vol_font_size * RENDER_SCALE))
                 else:
                     self._cached_font_title = ImageFont.load_default()
-            except Exception:
-                self._cached_font_title = ImageFont.load_default()
-                
-            vol_font_size = 15 if volume_format == "db" else 19
-            try:
-                if vol_font_file:
-                    self._cached_font_vol = ImageFont.truetype(vol_font_file, vol_font_size * RENDER_SCALE)
-                else:
                     self._cached_font_vol = ImageFont.load_default()
             except Exception:
+                self._cached_font_title = ImageFont.load_default()
                 self._cached_font_vol = ImageFont.load_default()
 
             font_title = self._cached_font_title
@@ -439,25 +474,26 @@ class WaveControllerBaseAction(ActionBase):
             except TypeError:
                 mid_draw.text((int((165 - 20) * RENDER_SCALE), int((64 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
 
-            # Icon Placement
+            # Icon Placement & Rendering
             icon_drawn = False
             icon_w = 26
-            if effective_icon_path and os.path.exists(effective_icon_path):
-                if effective_icon_path != self._cached_icon_path or self._cached_icon_img is None:
-                    try:
-                        loaded_img = Image.open(effective_icon_path).convert("RGBA")
-                        orig_w, orig_h = loaded_img.size
-                        target_max = int(27 * RENDER_SCALE)
+            
+            if effective_icon_identifier:
+                if effective_icon_identifier != self._cached_icon_path or self._cached_icon_img is None:
+                    target_max = int(27 * RENDER_SCALE)
+                    resolved_pil = self.resolve_icon_as_pil(effective_icon_identifier, target_size=target_max)
+                    if resolved_pil is not None:
+                        orig_w, orig_h = resolved_pil.size
                         if orig_w > orig_h:
                             new_w = target_max
                             new_h = max(1, int(orig_h * target_max / orig_w))
                         else:
                             new_h = target_max
                             new_w = max(1, int(orig_w * target_max / orig_h))
-                        self._cached_icon_img = loaded_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    except Exception:
+                        self._cached_icon_img = resolved_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    else:
                         self._cached_icon_img = None
-                    self._cached_icon_path = effective_icon_path
+                    self._cached_icon_path = effective_icon_identifier
                     
                 if self._cached_icon_img is not None:
                     icon_img = self._cached_icon_img.copy()
@@ -649,15 +685,3 @@ class WaveControllerBaseAction(ActionBase):
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
                 GLib.idle_add(self.set_media, img)
-
-    def font_name_to_path(self, font_name: str) -> str:
-        """Resolves system font name to font file path via fc-match."""
-        import subprocess
-        try:
-            name_only = font_name.split()[0]
-            out = subprocess.check_output(["fc-match", "-f", "%{file}", name_only], text=True, stderr=subprocess.DEVNULL)
-            if out and os.path.exists(out.strip()):
-                return out.strip()
-        except Exception:
-            pass
-        return ""
