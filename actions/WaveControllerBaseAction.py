@@ -23,7 +23,8 @@ RENDER_SCALE = 2
 class WaveControllerBaseAction(ActionBase):
     """
     Base Action maintaining the exact intact visual widget rendering engine:
-    9-tick radial knob, volume arcs, mute border, peak bars, and dual-meter styling.
+    9-tick radial knob, volume arcs, rotating pointer notch, peak hold markers,
+    mute border, and dual-meter styling.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -55,7 +56,7 @@ class WaveControllerBaseAction(ActionBase):
         self._cached_midground = None
         self._cached_midground_key = None
         self._current_peak = 0.0
-        self._peak_hold = 0.0
+        self._peak_hold_val = 0.0
         self._peak_hold_time = 0.0
         self._last_volume_adjust_time = 0.0
 
@@ -68,7 +69,7 @@ class WaveControllerBaseAction(ActionBase):
         self._last_title_font_size = None
         self._last_max_width = None
 
-        # Pre-computed geometry constants for peak performance
+        # Pre-computed geometry constants
         self._cx = 70 * RENDER_SCALE
         self._cy = 104 * RENDER_SCALE
         self._r_outer = 44 * RENDER_SCALE
@@ -81,7 +82,7 @@ class WaveControllerBaseAction(ActionBase):
         self._bbox_outer = [(self._cx - self._r_outer, self._cy - self._r_outer), (self._cx + self._r_outer, self._cy + self._r_outer)]
         self._bbox_inner = [(self._cx - self._r_inner, self._cy - self._r_inner), (self._cx + self._r_inner, self._cy + self._r_inner)]
 
-        # Pre-compute fixed 210-degree start cap coordinates
+        # Fixed 210-degree start cap coordinates
         rad_start = math.radians(210)
         self._cos_210 = math.cos(rad_start)
         self._sin_210 = math.sin(rad_start)
@@ -92,6 +93,17 @@ class WaveControllerBaseAction(ActionBase):
         self._gy1 = self._cy - self._r_arc_box - 8 * RENDER_SCALE
         self._gx2 = self._cx + self._r_arc_box + 8 * RENDER_SCALE
         self._gy2 = self._cy + 8 * RENDER_SCALE
+
+        self._sub_width = self._gx2 - self._gx1
+        self._sub_height = self._gy2 - self._gy1
+        self._sub_cx = 8 * RENDER_SCALE + self._r_arc_box
+        self._sub_cy = 8 * RENDER_SCALE + self._r_arc_box
+        self._sub_bbox = [(self._sub_cx - self._r_arc_box, self._sub_cy - self._r_arc_box), (self._sub_cx + self._r_arc_box, self._sub_cy + self._r_arc_box)]
+        self._sub_start_cap_x = self._sub_cx + self._r_arc_center * self._cos_210
+        self._sub_start_cap_y = self._sub_cy + self._r_arc_center * self._sin_210
+
+        self._peak_mask_sub = Image.new("L", (self._sub_width, self._sub_height), 0)
+        self._peak_mask_sub_draw = ImageDraw.Draw(self._peak_mask_sub)
 
     def on_ready(self) -> None:
         self.running = True
@@ -120,7 +132,6 @@ class WaveControllerBaseAction(ActionBase):
     def on_removed_from_cache(self) -> None:
         self.on_remove()
 
-    # Subclasses MUST override these target hooks
     def initial_load_status(self):
         pass
 
@@ -168,8 +179,8 @@ class WaveControllerBaseAction(ActionBase):
             return False
 
         now = time.time()
-        # Refresh volume & mute state every 400ms from WaveController IPC
-        if now - self.last_poll_time > 0.4:
+        # Refresh volume & mute state every 300ms from WaveController
+        if now - self.last_poll_time > 0.3:
             self.last_poll_time = now
             self.initial_load_status()
 
@@ -180,11 +191,11 @@ class WaveControllerBaseAction(ActionBase):
             self._current_peak = max(raw_peak, self._current_peak * smooth_decay)
             
             # Peak hold marker decay
-            if self._current_peak >= self._peak_hold:
-                self._peak_hold = self._current_peak
+            if self._current_peak >= self._peak_hold_val:
+                self._peak_hold_val = self._current_peak
                 self._peak_hold_time = now
             elif (now - self._peak_hold_time) > 1.2:
-                self._peak_hold = max(self._current_peak, self._peak_hold - 0.04)
+                self._peak_hold_val = max(self._current_peak, self._peak_hold_val - 0.04)
 
             self.update_ui_rendering(peak=self._current_peak)
         else:
@@ -237,6 +248,14 @@ class WaveControllerBaseAction(ActionBase):
                 
             self._gauge_gradient_img = grad_img
             return self._gauge_gradient_img
+
+    def _get_gauge_gradient_image_sub(self, width: int, height: int, bbox: list) -> Image.Image:
+        with self._render_lock:
+            if self._gauge_gradient_img_sub is not None:
+                return self._gauge_gradient_img_sub
+            grad_img = self._get_gauge_gradient_image(width, height, bbox)
+            self._gauge_gradient_img_sub = grad_img.crop((self._gx1, self._gy1, self._gx2, self._gy2))
+            return self._gauge_gradient_img_sub
 
     def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
         width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE
@@ -335,6 +354,11 @@ class WaveControllerBaseAction(ActionBase):
         bbox_inner = [(cx - r_inner, cy - r_inner), (cx + r_inner, cy + r_inner)]
         start_cap_x = self._start_cap_x
         start_cap_y = self._start_cap_y
+
+        sub_cx = self._sub_cx
+        sub_cy = self._sub_cy
+        sub_start_cap_x = self._sub_start_cap_x
+        sub_start_cap_y = self._sub_start_cap_y
 
         # Build Midground Card (Text, Icon, Inner Knob)
         if self._cached_midground is None or self._cached_midground_key != midground_key:
@@ -539,29 +563,35 @@ class WaveControllerBaseAction(ActionBase):
             else:
                 is_live_enabled = settings.get("live_meter", True)
                 if is_live_enabled:
-                    meter_level = max(0.0, min(1.0, peak * (volume / 100.0)))
-                    meter_angle = int(210 + 120 * meter_level)
-                    
-                    if meter_angle > 210:
-                        grad_img = self._get_gauge_gradient_image(width, height, bbox)
-                        mask = Image.new("L", (width, height), 0)
-                        mask_draw = ImageDraw.Draw(mask)
-                        mask_draw.arc(bbox, start=210, end=meter_angle, fill=255, width=arc_w)
-                        mask_draw.ellipse([(start_cap_x - cap_r, start_cap_y - cap_r), (start_cap_x + cap_r, start_cap_y + cap_r)], fill=255)
-                        rad_m = math.radians(meter_angle)
-                        xm = cx + r_arc_center * math.cos(rad_m)
-                        ym = cy + r_arc_center * math.sin(rad_m)
-                        mask_draw.ellipse([(xm - cap_r, ym - cap_r), (xm + cap_r, ym + cap_r)], fill=255)
-                        img.paste(grad_img, (0, 0), mask)
-                        
-                    # Draw Peak Hold Marker
-                    hold_level = max(0.0, min(1.0, self._peak_hold * (volume / 100.0)))
-                    hold_angle = int(210 + 120 * hold_level)
-                    if hold_angle > 212:
-                        rad_h = math.radians(hold_angle)
-                        xh = cx + r_arc_center * math.cos(rad_h)
-                        yh = cy + r_arc_center * math.sin(rad_h)
-                        draw.ellipse([(xh - cap_r * 0.8, yh - cap_r * 0.8), (xh + cap_r * 0.8, yh + cap_r * 0.8)], fill=(255, 255, 255, 230))
+                    if peak > 0.04:
+                        scaled_peak = peak * (volume / 100.0)
+                        peak_angle = int(210 + 120 * min(1.0, scaled_peak))
+                        if peak_angle > 210:
+                            rad_e = math.radians(min(330, peak_angle))
+                            xe = cx + r_arc_center * math.cos(rad_e)
+                            ye = cy + r_arc_center * math.sin(rad_e)
+                            
+                            if peak >= 0.99 or scaled_peak >= 0.99:
+                                draw.arc(bbox, start=210, end=min(330, peak_angle), fill=(255, 30, 30, 255), width=arc_w)
+                                draw.ellipse([(start_cap_x - cap_r, start_cap_y - cap_r), (start_cap_x + cap_r, start_cap_y + cap_r)], fill=(255, 30, 30, 255))
+                                draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 30, 30, 255))
+                            else:
+                                self._peak_mask_sub_draw.rectangle([(0, 0), (self._sub_width, self._sub_height)], fill=0)
+                                self._peak_mask_sub_draw.arc(self._sub_bbox, start=210, end=peak_angle, fill=255, width=arc_w)
+                                sub_xe = sub_cx + r_arc_center * math.cos(rad_e)
+                                sub_ye = sub_cy + r_arc_center * math.sin(rad_e)
+                                self._peak_mask_sub_draw.ellipse([(sub_start_cap_x - cap_r, sub_start_cap_y - cap_r), (sub_start_cap_x + cap_r, sub_start_cap_y + cap_r)], fill=255)
+                                self._peak_mask_sub_draw.ellipse([(sub_xe - cap_r, sub_ye - cap_r), (sub_xe + cap_r, sub_ye + cap_r)], fill=255)
+                                
+                                grad_img_sub = self._get_gauge_gradient_image_sub(width, height, bbox)
+                                img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
+
+                    # Peak Hold Marker
+                    if self._peak_hold_val > 0.04:
+                        scaled_hold = self._peak_hold_val * (volume / 100.0)
+                        hold_angle = int(210 + 120 * min(1.0, scaled_hold))
+                        if hold_angle > 210:
+                            draw.arc(bbox, start=max(210, hold_angle - 1), end=min(330, hold_angle + 1), fill=(255, 75, 75, 255), width=arc_w)
                 else:
                     vol_angle = int(210 + 120 * (volume / 100.0))
                     if vol_angle > 210:
@@ -570,31 +600,55 @@ class WaveControllerBaseAction(ActionBase):
                         xe = cx + r_arc_center * math.cos(rad_e)
                         ye = cy + r_arc_center * math.sin(rad_e)
                         draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(0, 168, 255, 255))
-        else:
-            # Red Muted Perimeter Border
-            draw.rectangle([(0, 0), (width - 1, height - 1)], outline=(239, 68, 68, 255), width=int(2 * RENDER_SCALE))
 
+        # 4. Draw Rotating Pointer Notch on Inner Knob
+        pointer_angle = 210 + 120 * (volume / 100.0)
+        rad_pt = math.radians(pointer_angle)
+        r_notch_in = 26 * RENDER_SCALE
+        r_notch_out = 36 * RENDER_SCALE
+        xp1 = cx + r_notch_in * math.cos(rad_pt)
+        yp1 = cy + r_notch_in * math.sin(rad_pt)
+        xp2 = cx + r_notch_out * math.cos(rad_pt)
+        yp2 = cy + r_notch_out * math.sin(rad_pt)
+        pointer_color = (255, 255, 255, 255)
+        notch_w = int(2.5 * RENDER_SCALE)
+        draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=notch_w)
+
+        # 5. Red Perimeter Border when Muted
+        if is_muted:
+            border_w = int(2 * RENDER_SCALE)
+            draw.rounded_rectangle(
+                [(1 * RENDER_SCALE, 1 * RENDER_SCALE), (width - 1 - 1 * RENDER_SCALE, height - 1 - 1 * RENDER_SCALE)],
+                radius=12 * RENDER_SCALE,
+                outline=(255, 59, 48, 255),
+                width=border_w
+            )
+
+        # 6. Downsample back to Stream Deck + LCD resolution (200x100)
+        if RENDER_SCALE > 1:
+            return img.resize((200, 100), Image.Resampling.BILINEAR)
         return img
 
     def update_ui_rendering(self, peak: float = 0.0, force: bool = False):
+        if not force and hasattr(self, "get_is_present") and not self.get_is_present():
+            return
+            
         now = time.time()
         is_adjusting = (now - self._last_volume_adjust_time) < 1.2
         
         vol_changed = (self.current_volume != self.last_drawn_volume)
         mute_changed = (self.last_mute != self.last_drawn_mute)
-        peak_changed = (abs(peak - self.last_drawn_peak) > 0.015) or (abs(self._peak_hold - self.last_drawn_hold) > 0.02)
+        peak_changed = (abs(peak - self.last_drawn_peak) > 0.015) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
         
         if force or vol_changed or mute_changed or (peak_changed and not is_adjusting):
-            self.last_drawn_volume = self.current_volume
-            self.last_drawn_mute = self.last_mute
-            self.last_drawn_peak = peak
-            self.last_drawn_hold = self._peak_hold
-            
-            img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
-            try:
-                self.set_media(image=img)
-            except Exception:
-                pass
+            with self._render_lock:
+                self.last_drawn_volume = self.current_volume
+                self.last_drawn_mute = self.last_mute
+                self.last_drawn_peak = peak
+                self.last_drawn_hold = self._peak_hold_val
+                
+                img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
+                GLib.idle_add(self.set_media, img)
 
     def font_name_to_path(self, font_name: str) -> str:
         """Resolves system font name to font file path via fc-match."""

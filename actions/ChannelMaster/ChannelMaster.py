@@ -19,14 +19,22 @@ class ChannelMaster(WaveControllerBaseAction):
 
     def initial_load_status(self):
         settings = self.get_settings() or {}
-        ch_id = settings.get("channel_id", "mic")
+        ch_id = self.get_configured_channel_id()
         vol, muted = self.client.get_channel_volume(ch_id)
         self.current_volume = vol
         self.last_mute = muted
 
     def get_configured_channel_id(self) -> str:
         settings = self.get_settings() or {}
-        return settings.get("channel_id", "mic")
+        ch = settings.get("channel_id")
+        if not ch:
+            data = self.client.get_channels_and_mixes()
+            channels = data.get("channels", [])
+            if channels:
+                ch = channels[0]["id"]
+            else:
+                ch = "mic"
+        return ch
 
     def get_target_title_and_subtitle(self) -> tuple:
         settings = self.get_settings() or {}
@@ -41,7 +49,7 @@ class ChannelMaster(WaveControllerBaseAction):
 
     def get_target_icon_path(self) -> str:
         ch_id = self.get_configured_channel_id().lower()
-        if ch_id == "mic" or ch_id == "microphone":
+        if ch_id in ("mic", "microphone", "fefine", "fifine"):
             return os.path.join(self.plugin_base.PATH, "assets", "input.png")
         return os.path.join(self.plugin_base.PATH, "assets", "output.png")
 
@@ -82,9 +90,7 @@ class ChannelMaster(WaveControllerBaseAction):
                 for c in channels:
                     self.channels_list.append((c["id"], c.get("name", c["id"].capitalize())))
             else:
-                # Default channels fallback
-                for default_id, default_name in [("mic", "Microphone"), ("spotify", "Spotify"), ("discord", "Voice Chat"), ("games", "Game Audio")]:
-                    self.channels_list.append((default_id, default_name))
+                self.channels_list = [("mic", "Microphone"), ("spotify", "Spotify")]
 
             self.channel_model = Gtk.StringList()
             for _, display_name in self.channels_list:
@@ -92,12 +98,18 @@ class ChannelMaster(WaveControllerBaseAction):
 
             self.channel_selector.set_model(self.channel_model)
 
-            current_ch = settings.get("channel_id", "mic")
+            current_ch = settings.get("channel_id")
             selected_idx = 0
-            for idx, (cid, _) in enumerate(self.channels_list):
-                if cid == current_ch:
-                    selected_idx = idx
-                    break
+            if current_ch:
+                for idx, (cid, _) in enumerate(self.channels_list):
+                    if cid == current_ch:
+                        selected_idx = idx
+                        break
+            else:
+                if self.channels_list:
+                    settings["channel_id"] = self.channels_list[0][0]
+                    settings["channel_name"] = self.channels_list[0][1]
+                    self.set_settings(settings)
 
             self.channel_selector.set_selected(selected_idx)
         finally:

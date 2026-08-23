@@ -21,11 +21,27 @@ class SubMix(WaveControllerBaseAction):
 
     def get_configured_mix_id(self) -> str:
         settings = self.get_settings() or {}
-        return settings.get("mix_id", "personal")
+        m = settings.get("mix_id")
+        if not m:
+            data = self.client.get_channels_and_mixes()
+            mixes = data.get("mixes", [])
+            if mixes:
+                m = mixes[0]["id"]
+            else:
+                m = "personal_mix"
+        return m
 
     def get_configured_channel_id(self) -> str:
         settings = self.get_settings() or {}
-        return settings.get("channel_id", "spotify")
+        ch = settings.get("channel_id")
+        if not ch:
+            data = self.client.get_channels_and_mixes()
+            channels = data.get("channels", [])
+            if channels:
+                ch = channels[0]["id"]
+            else:
+                ch = "spotify"
+        return ch
 
     def initial_load_status(self):
         ch_id = self.get_configured_channel_id()
@@ -57,7 +73,7 @@ class SubMix(WaveControllerBaseAction):
 
     def get_target_icon_path(self) -> str:
         ch_id = self.get_configured_channel_id().lower()
-        if ch_id == "mic" or ch_id == "microphone":
+        if ch_id in ("mic", "microphone", "fefine", "fifine"):
             return os.path.join(self.plugin_base.PATH, "assets", "input.png")
         return os.path.join(self.plugin_base.PATH, "assets", "output.png")
 
@@ -102,19 +118,25 @@ class SubMix(WaveControllerBaseAction):
                 for m in mixes:
                     self.mixes_list.append((m["id"], m.get("name", m["id"].capitalize())))
             else:
-                self.mixes_list = [("personal", "Personal Mix"), ("stream", "Stream Mix")]
+                self.mixes_list = [("personal_mix", "Personal Mix"), ("chat_mix", "Chat Mix")]
 
             self.mix_model = Gtk.StringList()
             for _, display_name in self.mixes_list:
                 self.mix_model.append(display_name)
             self.mix_selector.set_model(self.mix_model)
 
-            current_mix = settings.get("mix_id", "personal")
+            current_mix = settings.get("mix_id")
             mix_idx = 0
-            for idx, (mid, _) in enumerate(self.mixes_list):
-                if mid == current_mix:
-                    mix_idx = idx
-                    break
+            if current_mix:
+                for idx, (mid, _) in enumerate(self.mixes_list):
+                    if mid == current_mix:
+                        mix_idx = idx
+                        break
+            else:
+                if self.mixes_list:
+                    settings["mix_id"] = self.mixes_list[0][0]
+                    settings["mix_name"] = self.mixes_list[0][1]
+
             self.mix_selector.set_selected(mix_idx)
 
             # 2. Populate Channels
@@ -123,20 +145,27 @@ class SubMix(WaveControllerBaseAction):
                 for c in channels:
                     self.channels_list.append((c["id"], c.get("name", c["id"].capitalize())))
             else:
-                self.channels_list = [("spotify", "Spotify"), ("discord", "Voice Chat"), ("games", "Game Audio"), ("mic", "Microphone")]
+                self.channels_list = [("spotify", "Spotify"), ("fefine", "Fefine")]
 
             self.channel_model = Gtk.StringList()
             for _, display_name in self.channels_list:
                 self.channel_model.append(display_name)
             self.channel_selector.set_model(self.channel_model)
 
-            current_ch = settings.get("channel_id", "spotify")
+            current_ch = settings.get("channel_id")
             ch_idx = 0
-            for idx, (cid, _) in enumerate(self.channels_list):
-                if cid == current_ch:
-                    ch_idx = idx
-                    break
+            if current_ch:
+                for idx, (cid, _) in enumerate(self.channels_list):
+                    if cid == current_ch:
+                        ch_idx = idx
+                        break
+            else:
+                if self.channels_list:
+                    settings["channel_id"] = self.channels_list[0][0]
+                    settings["channel_name"] = self.channels_list[0][1]
+
             self.channel_selector.set_selected(ch_idx)
+            self.set_settings(settings)
         finally:
             self._updating_dropdowns = False
 

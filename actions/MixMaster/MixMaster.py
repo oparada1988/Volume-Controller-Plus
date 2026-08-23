@@ -22,7 +22,15 @@ class MixMaster(WaveControllerBaseAction):
 
     def get_configured_mix_id(self) -> str:
         settings = self.get_settings() or {}
-        return settings.get("mix_id", "personal")
+        m = settings.get("mix_id")
+        if not m:
+            data = self.client.get_channels_and_mixes()
+            mixes = data.get("mixes", [])
+            if mixes:
+                m = mixes[0]["id"]
+            else:
+                m = "personal_mix"
+        return m
 
     def initial_load_status(self):
         m_id = self.get_configured_mix_id()
@@ -119,19 +127,25 @@ class MixMaster(WaveControllerBaseAction):
                 for m in mixes:
                     self.mixes_list.append((m["id"], m.get("name", m["id"].capitalize())))
             else:
-                self.mixes_list = [("personal", "Personal Mix"), ("stream", "Stream Mix")]
+                self.mixes_list = [("personal_mix", "Personal Mix"), ("chat_mix", "Chat Mix")]
 
             self.mix_model = Gtk.StringList()
             for _, display_name in self.mixes_list:
                 self.mix_model.append(display_name)
             self.mix_selector.set_model(self.mix_model)
 
-            current_mix = settings.get("mix_id", "personal")
+            current_mix = settings.get("mix_id")
             mix_idx = 0
-            for idx, (mid, _) in enumerate(self.mixes_list):
-                if mid == current_mix:
-                    mix_idx = idx
-                    break
+            if current_mix:
+                for idx, (mid, _) in enumerate(self.mixes_list):
+                    if mid == current_mix:
+                        mix_idx = idx
+                        break
+            else:
+                if self.mixes_list:
+                    settings["mix_id"] = self.mixes_list[0][0]
+                    settings["mix_name"] = self.mixes_list[0][1]
+
             self.mix_selector.set_selected(mix_idx)
 
             # 2. Populate Output Devices
@@ -161,6 +175,7 @@ class MixMaster(WaveControllerBaseAction):
                     dev_idx = idx
                     break
             self.device_selector.set_selected(dev_idx)
+            self.set_settings(settings)
         finally:
             self._updating_dropdowns = False
 
