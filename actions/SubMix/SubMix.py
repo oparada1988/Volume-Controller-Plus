@@ -275,20 +275,7 @@ class SubMix(WaveControllerBaseAction):
         self.channel_selector.connect("notify::selected", self._on_channel_selected)
         self.update_dropdowns()
 
-        # 3. Custom Label
-        self.custom_name_row = Adw.EntryRow(
-            title="Custom Label",
-            text=settings.get("custom_name", "")
-        )
-        def on_name_changed(entry, *args):
-            s = self.get_settings() or {}
-            s["custom_name"] = entry.get_text().strip()
-            self.set_settings(s)
-            self._cached_midground = None
-            self.update_ui_rendering(force=True)
-        self.custom_name_row.connect("notify::text", on_name_changed)
-
-        # 4. Volume Step Size
+        # 3. Volume Step Size
         self.step_model = Gtk.StringList()
         step_sizes = ["1%", "2%", "5%", "10%"]
         for size in step_sizes:
@@ -307,7 +294,7 @@ class SubMix(WaveControllerBaseAction):
                 self.set_settings(s)
         self.step_selector.connect("notify::selected", on_step_changed)
 
-        # 5. Volume Format
+        # 4. Volume Format
         self.vol_format_model = Gtk.StringList()
         self.vol_format_model.append("Percentage (%)")
         self.vol_format_model.append("Decibels (dB)")
@@ -324,7 +311,7 @@ class SubMix(WaveControllerBaseAction):
             self.update_ui_rendering(force=True)
         self.vol_format_selector.connect("notify::selected", on_format_changed)
 
-        # 6. Live Peak Meter Toggle
+        # 5. Live Peak Meter Toggle
         self.live_meter_row = Adw.SwitchRow(
             title="Live Peak Meter"
         )
@@ -340,7 +327,6 @@ class SubMix(WaveControllerBaseAction):
         return [
             self.mix_selector,
             self.channel_selector,
-            self.custom_name_row,
             self.step_selector,
             self.vol_format_selector,
             self.live_meter_row

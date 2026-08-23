@@ -439,11 +439,10 @@ class WaveControllerBaseAction(ActionBase):
         # 2. Resolve Labels, Fonts & Cache Keys
         settings = self.get_settings() or {}
         volume_format = settings.get("volume_format", "percent")
-        custom_name = settings.get("custom_name", "")
         custom_icon_path = settings.get("custom_icon", "")
         
         target_title, target_subtitle = self.get_target_title_and_subtitle()
-        title_text = custom_name if custom_name else target_title
+        title_text = target_title
         
         effective_icon_identifier = custom_icon_path if custom_icon_path else self.get_target_icon_path()
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
@@ -753,10 +752,9 @@ class WaveControllerBaseAction(ActionBase):
         peak_changed = (abs(peak - self.last_drawn_peak) > 0.012) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
         
         settings = self.get_settings() or {}
-        custom_name = settings.get("custom_name", "")
         custom_icon = settings.get("custom_icon", "")
         target_title, _ = self.get_target_title_and_subtitle()
-        title_text = custom_name if custom_name else target_title
+        title_text = target_title
         effective_icon = custom_icon if custom_icon else self.get_target_icon_path()
         
         title_changed = (title_text != getattr(self, "last_drawn_title", None))
