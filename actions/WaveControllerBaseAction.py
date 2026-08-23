@@ -701,18 +701,29 @@ class WaveControllerBaseAction(ActionBase):
             return
             
         now = time.time()
+        # Cap frame rate to ~30 FPS per dial to prevent USB HID pipe saturation
+        if not force and (now - getattr(self, "_last_render_time", 0.0) < 0.033):
+            return
+
         is_adjusting = (now - self._last_volume_adjust_time) < 1.2
         
         vol_changed = (self.current_volume != self.last_drawn_volume)
         mute_changed = (self.last_mute != self.last_drawn_mute)
-        peak_changed = (abs(peak - self.last_drawn_peak) > 0.015) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
+        peak_changed = (abs(peak - self.last_drawn_peak) > 0.012) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
         
         if force or vol_changed or mute_changed or (peak_changed and not is_adjusting):
             with self._render_lock:
+                self._last_render_time = now
                 self.last_drawn_volume = self.current_volume
                 self.last_drawn_mute = self.last_mute
                 self.last_drawn_peak = peak
                 self.last_drawn_hold = self._peak_hold_val
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
-                GLib.idle_add(self.set_media, img)
+                try:
+                    self.set_media(image=img)
+                except Exception:
+                    try:
+                        self.set_media(img)
+                    except Exception:
+                        GLib.idle_add(self.set_media, img)
