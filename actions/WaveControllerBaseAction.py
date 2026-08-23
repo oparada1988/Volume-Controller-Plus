@@ -61,6 +61,7 @@ class WaveControllerBaseAction(ActionBase):
         self._peak_hold_val = 0.0
         self._peak_hold_time = 0.0
         self._last_volume_adjust_time = 0.0
+        self._last_drawn_adjusting = False
 
         # Pre-computed geometry constants
         self._cx = 70 * RENDER_SCALE
@@ -706,18 +707,20 @@ class WaveControllerBaseAction(ActionBase):
             return
 
         is_adjusting = (now - self._last_volume_adjust_time) < 1.2
+        adjust_changed = (is_adjusting != getattr(self, "_last_drawn_adjusting", False))
         
         vol_changed = (self.current_volume != self.last_drawn_volume)
         mute_changed = (self.last_mute != self.last_drawn_mute)
         peak_changed = (abs(peak - self.last_drawn_peak) > 0.012) or (abs(self._peak_hold_val - self.last_drawn_hold) > 0.02)
         
-        if force or vol_changed or mute_changed or (peak_changed and not is_adjusting):
+        if force or vol_changed or mute_changed or adjust_changed or (peak_changed and not is_adjusting):
             with self._render_lock:
                 self._last_render_time = now
                 self.last_drawn_volume = self.current_volume
                 self.last_drawn_mute = self.last_mute
                 self.last_drawn_peak = peak
                 self.last_drawn_hold = self._peak_hold_val
+                self._last_drawn_adjusting = is_adjusting
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
                 try:
