@@ -9,7 +9,7 @@ import io
 import time
 import math
 import threading
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 
 # Import gtk modules
 import gi
@@ -282,10 +282,12 @@ class WaveControllerBaseAction(ActionBase):
             self._gauge_gradient_img_sub = grad_img.crop((self._gx1, self._gy1, self._gx2, self._gy2))
             return self._gauge_gradient_img_sub
 
-    def resolve_icon_as_pil(self, icon_identifier: str, target_size: int = 54) -> Image.Image:
-        """Resolves an icon name or file path to a crisp PIL Image using GTK IconTheme or local assets."""
+    def resolve_icon_as_pil(self, icon_identifier: str, target_size: int = 56) -> Image.Image:
+        """Resolves an icon name or file path to a crisp, high-contrast PIL Image using local assets or GTK IconTheme."""
         if not icon_identifier:
             return None
+
+        resolved_img = None
 
         # 1. Direct valid image file on disk
         if os.path.exists(icon_identifier):
@@ -293,50 +295,82 @@ class WaveControllerBaseAction(ActionBase):
                 if icon_identifier.endswith(".svg"):
                     pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_identifier, target_size, target_size, True)
                     ok, buf = pix.save_to_bufferv("png")
-                    return Image.open(io.BytesIO(buf)).convert("RGBA")
+                    resolved_img = Image.open(io.BytesIO(buf)).convert("RGBA")
                 else:
-                    return Image.open(icon_identifier).convert("RGBA")
+                    resolved_img = Image.open(icon_identifier).convert("RGBA")
             except Exception:
                 pass
 
-        # 2. Check plugin bundled assets
-        if hasattr(self, "plugin_base") and hasattr(self.plugin_base, "PATH"):
-            for candidate in [
+        # 2. Check plugin bundled assets and assets/icons
+        if resolved_img is None and hasattr(self, "plugin_base") and hasattr(self.plugin_base, "PATH"):
+            clean_name = icon_identifier.replace("-symbolic", "")
+            candidates = [
                 icon_identifier,
                 f"{icon_identifier}.png",
                 f"{icon_identifier}.svg",
                 os.path.join("assets", icon_identifier),
-                os.path.join("assets", f"{icon_identifier}.png")
-            ]:
+                os.path.join("assets", f"{icon_identifier}.png"),
+                os.path.join("assets", f"{icon_identifier}.svg"),
+                os.path.join("assets", f"{clean_name}.png"),
+                os.path.join("assets", "icons", f"{icon_identifier}.png"),
+                os.path.join("assets", "icons", f"{icon_identifier}.svg"),
+                os.path.join("assets", "icons", f"{clean_name}.png"),
+                os.path.join("assets", "icons", f"{clean_name}.svg"),
+            ]
+            for candidate in candidates:
                 asset_file = os.path.join(self.plugin_base.PATH, candidate)
                 if os.path.exists(asset_file):
                     try:
                         if asset_file.endswith(".svg"):
                             pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(asset_file, target_size, target_size, True)
                             ok, buf = pix.save_to_bufferv("png")
-                            return Image.open(io.BytesIO(buf)).convert("RGBA")
+                            resolved_img = Image.open(io.BytesIO(buf)).convert("RGBA")
+                            break
                         else:
-                            return Image.open(asset_file).convert("RGBA")
+                            resolved_img = Image.open(asset_file).convert("RGBA")
+                            break
                     except Exception:
                         pass
 
         # 3. Look up via Freedesktop GTK IconTheme
+        if resolved_img is None:
+            try:
+                display = Gdk.Display.get_default()
+                if display:
+                    theme = Gtk.IconTheme.get_for_display(display)
+                    for lookup_name in [icon_identifier, f"{icon_identifier}-symbolic", icon_identifier.replace("-symbolic", "")]:
+                        if theme.has_icon(lookup_name):
+                            paintable = theme.lookup_icon(lookup_name, None, target_size, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
+                            if paintable and paintable.get_file():
+                                path = paintable.get_file().get_path()
+                                if path and os.path.exists(path):
+                                    pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, target_size, target_size, True)
+                                    ok, buf = pix.save_to_bufferv("png")
+                                    resolved_img = Image.open(io.BytesIO(buf)).convert("RGBA")
+                                    break
+            except Exception:
+                pass
+
+        if resolved_img is None:
+            return None
+
+        # 4. Ensure high contrast: If the icon is monochrome/grayscale, make it crisp bright white (#ffffff)
         try:
-            display = Gdk.Display.get_default()
-            if display:
-                theme = Gtk.IconTheme.get_for_display(display)
-                if theme.has_icon(icon_identifier):
-                    paintable = theme.lookup_icon(icon_identifier, None, target_size, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.NONE)
-                    if paintable and paintable.get_file():
-                        path = paintable.get_file().get_path()
-                        if path and os.path.exists(path):
-                            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, target_size, target_size, True)
-                            ok, buf = pix.save_to_bufferv("png")
-                            return Image.open(io.BytesIO(buf)).convert("RGBA")
+            r, g, b, a = resolved_img.split()
+            diff_rg = ImageChops.difference(r, g)
+            diff_gb = ImageChops.difference(g, b)
+            max_d_rg = diff_rg.getextrema()[1]
+            max_d_gb = diff_gb.getextrema()[1]
+            
+            # If color difference across channels is low (grayscale/symbolic), recolor to crisp pure white
+            if max_d_rg < 22 and max_d_gb < 22:
+                white_img = Image.new("RGBA", resolved_img.size, (255, 255, 255, 255))
+                white_img.putalpha(a)
+                return white_img
         except Exception:
             pass
 
-        return None
+        return resolved_img
 
     def generate_volume_image(self, volume: int, is_muted: bool, peak: float = 0.0) -> Image.Image:
         width, height = 200 * RENDER_SCALE, 100 * RENDER_SCALE

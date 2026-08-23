@@ -78,6 +78,24 @@ class SubMix(WaveControllerBaseAction):
             if c.get("id") == ch_id:
                 if c.get("icon"):
                     return c.get("icon")
+        
+        assigned_map = data.get("assigned_apps", {})
+        apps = assigned_map.get(ch_id, [])
+        if apps:
+            app_low = apps[0].lower()
+            if "spotify" in app_low:
+                return "spotify"
+            elif "discord" in app_low:
+                return "discord"
+            elif "steam" in app_low or "game" in app_low:
+                return "steam"
+            elif "firefox" in app_low:
+                return "firefox"
+            elif "chrome" in app_low or "chromium" in app_low:
+                return "chromium"
+            elif "vlc" in app_low:
+                return "vlc"
+
         if ch_id.lower() in ("mic", "microphone", "fefine", "fifine"):
             return "audio-input-microphone-symbolic"
         return "audio-volume-high-symbolic"
