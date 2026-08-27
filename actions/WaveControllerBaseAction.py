@@ -544,9 +544,9 @@ class WaveControllerBaseAction(ActionBase):
                 if font_file:
                     self._cached_font_title = ImageFont.truetype(font_file, int(title_font_size * RENDER_SCALE))
                     self._cached_font_vol = ImageFont.truetype(font_file, int(vol_font_size * RENDER_SCALE))
-                    self._cached_font_badge_sm = ImageFont.truetype(font_file, int(8.5 * RENDER_SCALE))
-                    self._cached_font_badge_md = ImageFont.truetype(font_file, int(10 * RENDER_SCALE))
-                    self._cached_font_vol_wave = ImageFont.truetype(font_file, int(17 * RENDER_SCALE))
+                    self._cached_font_badge_sm = ImageFont.truetype(font_file, int(11 * RENDER_SCALE))
+                    self._cached_font_badge_md = ImageFont.truetype(font_file, int(12.5 * RENDER_SCALE))
+                    self._cached_font_vol_wave = ImageFont.truetype(font_file, int(18 * RENDER_SCALE))
                 else:
                     self._cached_font_title = ImageFont.load_default()
                     self._cached_font_vol = ImageFont.load_default()
@@ -572,36 +572,49 @@ class WaveControllerBaseAction(ActionBase):
                 is_online = telemetry_info.get("is_online", True)
                 phantom_48v = telemetry_info.get("phantom_48v", False)
 
-                # Slot 1: Connection Status Badge (Center: 165, 34)
-                s1_x, s1_y = 165 * RENDER_SCALE, 34 * RENDER_SCALE
-                s1_w, s1_h = 48 * RENDER_SCALE, 15 * RENDER_SCALE
+                # Slot 1: Connection Status Badge (Center: 165, 33)
+                s1_w, s1_h = int(54 * RENDER_SCALE), int(20 * RENDER_SCALE)
+                s1_x, s1_y = int(165 * RENDER_SCALE), int(33 * RENDER_SCALE)
                 s1_bbox = [
-                    (s1_x - s1_w / 2, s1_y - s1_h / 2),
-                    (s1_x + s1_w / 2, s1_y + s1_h / 2)
+                    (s1_x - s1_w // 2, s1_y - s1_h // 2),
+                    (s1_x + s1_w // 2, s1_y + s1_h // 2)
                 ]
                 if is_online:
-                    mid_draw.rounded_rectangle(s1_bbox, radius=4 * RENDER_SCALE, fill=(61, 179, 86, 55), outline=(74, 222, 128, 160), width=max(1, int(1 * RENDER_SCALE)))
-                    mid_draw.text((s1_x, s1_y), "ONLINE", font=font_badge_sm, fill=(74, 222, 128, 255), anchor="mm")
+                    mid_draw.rounded_rectangle(s1_bbox, radius=5 * RENDER_SCALE, fill=(24, 52, 34, 255), outline=(52, 128, 68, 200), width=max(1, int(1.2 * RENDER_SCALE)))
+                    mid_draw.text((s1_x, s1_y), "Online", font=font_badge_sm, fill=(74, 222, 128, 255), anchor="mm")
                 else:
-                    mid_draw.rounded_rectangle(s1_bbox, radius=4 * RENDER_SCALE, fill=(245, 158, 11, 45), outline=(251, 191, 36, 160), width=max(1, int(1 * RENDER_SCALE)))
-                    mid_draw.text((s1_x, s1_y), "OFFLINE", font=font_badge_sm, fill=(251, 191, 36, 255), anchor="mm")
+                    mid_draw.rounded_rectangle(s1_bbox, radius=5 * RENDER_SCALE, fill=(50, 36, 18, 255), outline=(180, 120, 20, 200), width=max(1, int(1.2 * RENDER_SCALE)))
+                    mid_draw.text((s1_x, s1_y), "Offline", font=font_badge_sm, fill=(251, 191, 36, 255), anchor="mm")
 
-                # Slot 2: 48V Phantom Power Badge (Center: 165, 57)
-                s2_x, s2_y = 165 * RENDER_SCALE, 57 * RENDER_SCALE
-                s2_w, s2_h = 44 * RENDER_SCALE, 17 * RENDER_SCALE
+                # Slot 2: 48V Phantom Power Badge (Center: 165, 59)
+                s2_w, s2_h = int(54 * RENDER_SCALE), int(23 * RENDER_SCALE)
+                s2_x, s2_y = int(165 * RENDER_SCALE), int(59 * RENDER_SCALE)
                 s2_bbox = [
-                    (s2_x - s2_w / 2, s2_y - s2_h / 2),
-                    (s2_x + s2_w / 2, s2_y + s2_h / 2)
+                    (s2_x - s2_w // 2, s2_y - s2_h // 2),
+                    (s2_x + s2_w // 2, s2_y + s2_h // 2)
                 ]
                 if phantom_48v:
-                    mid_draw.rounded_rectangle(s2_bbox, radius=4 * RENDER_SCALE, fill=(245, 158, 11, 70), outline=(251, 191, 36, 220), width=max(1, int(1.2 * RENDER_SCALE)))
-                    mid_draw.text((s2_x, s2_y), "⚡48V", font=font_badge_md, fill=(251, 191, 36, 255), anchor="mm")
+                    mid_draw.rounded_rectangle(s2_bbox, radius=6 * RENDER_SCALE, fill=(45, 33, 16, 255), outline=(245, 158, 11, 230), width=max(1, int(1.5 * RENDER_SCALE)))
+                    # Sharp vector lightning bolt
+                    lx = s2_x - 13 * RENDER_SCALE
+                    ly = s2_y
+                    s = RENDER_SCALE
+                    poly = [
+                        (lx + 1.2*s, ly - 6.5*s),
+                        (lx - 4.5*s, ly + 0.5*s),
+                        (lx - 0.5*s, ly + 0.5*s),
+                        (lx - 2.2*s, ly + 6.5*s),
+                        (lx + 4.5*s, ly - 0.5*s),
+                        (lx + 0.5*s, ly - 0.5*s)
+                    ]
+                    mid_draw.polygon(poly, fill=(251, 191, 36, 255))
+                    mid_draw.text((s2_x + 5 * RENDER_SCALE, s2_y), "48V", font=font_badge_md, fill=(251, 191, 36, 255), anchor="mm")
                 else:
-                    mid_draw.rounded_rectangle(s2_bbox, radius=4 * RENDER_SCALE, fill=(255, 255, 255, 15), outline=(255, 255, 255, 45), width=max(1, int(1 * RENDER_SCALE)))
-                    mid_draw.text((s2_x, s2_y), "48V", font=font_badge_md, fill=(255, 255, 255, 95), anchor="mm")
+                    mid_draw.rounded_rectangle(s2_bbox, radius=6 * RENDER_SCALE, fill=(35, 37, 42, 255), outline=(80, 85, 95, 180), width=max(1, int(1 * RENDER_SCALE)))
+                    mid_draw.text((s2_x, s2_y), "48V", font=font_badge_md, fill=(160, 165, 175, 255), anchor="mm")
 
-                # Slot 3: Volume / Gain Readout (Center: 165, 82)
-                s3_x, s3_y = 165 * RENDER_SCALE, 82 * RENDER_SCALE
+                # Slot 3: Volume / Gain Readout (Center: 165, 85)
+                s3_x, s3_y = int(165 * RENDER_SCALE), int(85 * RENDER_SCALE)
                 mid_draw.text((s3_x, s3_y), vol_text, font=font_vol_wave, fill=vol_color, anchor="mm")
             else:
                 # --- Standard Layout (Generic Channels: Spotify, Discord, Sub-Mix, etc.) ---

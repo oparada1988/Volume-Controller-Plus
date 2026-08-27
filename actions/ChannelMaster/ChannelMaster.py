@@ -137,13 +137,26 @@ class ChannelMaster(WaveControllerBaseAction):
         if "xlr" not in dev_name and "wave" not in dev_name and ch_id.lower() not in ("mic", "microphone"):
             return None
 
-        is_online = hw.get("is_connected", self.client.is_connected())
+        elgato_info = hw.get("elgato_info", {})
+        is_online = hw.get("is_connected")
+        if is_online is None or is_online is False:
+            if elgato_info and elgato_info.get("connected"):
+                is_online = True
+            elif bool(dev_name) and hw.get("gain_db") is not None:
+                is_online = True
+            else:
+                is_online = self.client.is_connected()
+        else:
+            is_online = bool(is_online)
+
         phantom_48v = hw.get("phantom_48v", False)
+        if not phantom_48v and elgato_info:
+            phantom_48v = elgato_info.get("phantom_power", False)
 
         return {
             "is_hardware": True,
-            "is_online": is_online,
-            "phantom_48v": phantom_48v,
+            "is_online": bool(is_online),
+            "phantom_48v": bool(phantom_48v),
             "gain_db": hw.get("gain_db", 0)
         }
 
