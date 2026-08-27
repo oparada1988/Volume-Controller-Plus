@@ -1,8 +1,10 @@
-# Volume Control Plus for StreamController
-<img width="1000" height="360" alt="g31" src="https://github.com/user-attachments/assets/254e6175-572e-4f63-beaa-333d7a278b89" />
+# WaveController for StreamController
 
+<img width="987" height="347" alt="WaveController-plugin-banner" src="https://github.com/user-attachments/assets/4bd0d764-d93e-4613-8f4b-5578e6cf5b23" />
 
-Volume Control plugin inspired by the official Elgato Volumen Mixer plugin. Mimics the visual UI for a clean look. Allows volume adjustment via dials, mute toggle via dial push, and touchscreen drag gestures to mute/unmute the audio.
+Official WaveController plugin for StreamController. Allows you to add Channel, Mixes, and Submixes to the StreamDeck Plus Dials.
+
+## This plugin is going through major refactoring. Please continue using the Main branch for the last stable release ##
 
 ## Features
 * **Dial Adjustment**: Smoothly turn dials to raise or lower PipeWire volume.
