@@ -3,6 +3,7 @@ import json
 import socket
 import threading
 import time
+import queue
 
 class WaveControllerClient:
     """
@@ -40,6 +41,11 @@ class WaveControllerClient:
         # Preload initial fallback data
         self._load_config_fallback()
 
+        # Dedicated sequential async command queue to prevent thread storm and race conditions
+        self._async_queue = queue.Queue(maxsize=150)
+        self._async_worker = threading.Thread(target=self._run_async_worker, daemon=True, name="WaveControllerAsyncWorker")
+        self._async_worker.start()
+
         # Start dedicated background poller thread
         self._bg_thread = threading.Thread(target=self._run_bg_poller, daemon=True, name="WaveControllerClientPoller")
         self._bg_thread.start()
@@ -72,15 +78,17 @@ class WaveControllerClient:
         """Reads until a complete newline is received from socket."""
         start_t = time.time()
         while "\n" not in buffer:
-            if time.time() - start_t > 0.35:
+            if time.time() - start_t > 0.20:
                 break
             try:
                 chunk = sock.recv(8192).decode("utf-8")
                 if not chunk:
-                    break
+                    raise ConnectionResetError("Socket closed by peer (EOF)")
                 buffer += chunk
             except socket.timeout:
                 break
+            except ConnectionResetError:
+                raise
             except Exception:
                 break
 
@@ -113,6 +121,20 @@ class WaveControllerClient:
                 pass
         return {}
 
+    def _run_async_worker(self):
+        """Sequential single-worker queue processing IPC commands strictly in chronological order."""
+        while self._running:
+            try:
+                cmd_dict = self._async_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self.send_command(cmd_dict, timeout=0.25)
+            except Exception:
+                pass
+            finally:
+                self._async_queue.task_done()
+
     def _run_bg_poller(self):
         """Dedicated background loop streaming live peaks and states with 0ms UI impact."""
         sock = None
@@ -133,8 +155,8 @@ class WaveControllerClient:
             try:
                 now = time.time()
 
-                # 1. Periodic full channel state refresh (every 150ms)
-                if now - last_channels_poll > 0.15:
+                # 1. Periodic full channel state refresh (every 200ms)
+                if now - last_channels_poll > 0.20:
                     last_channels_poll = now
                     sock.sendall(b'{"command": "get_channels"}\n')
                     line, buf = self._read_socket_line(sock, buf)
@@ -156,8 +178,8 @@ class WaveControllerClient:
                             with self._cache_lock:
                                 self._cached_devices = res.get("devices", [])
 
-                # 3. Periodic hardware status refresh (every 200ms)
-                if now - last_hardware_poll > 0.20:
+                # 3. Periodic hardware status refresh (every 250ms)
+                if now - last_hardware_poll > 0.25:
                     last_hardware_poll = now
                     sock.sendall(b'{"command": "get_hardware_status"}\n')
                     line, buf = self._read_socket_line(sock, buf)
@@ -167,7 +189,7 @@ class WaveControllerClient:
                             with self._cache_lock:
                                 self._cached_hardware_status = res
 
-                # 4. High-frequency live VU peak poll (every ~25ms / 40 FPS)
+                # 4. High-frequency live VU peak poll (every ~33ms / 30 FPS)
                 sock.sendall(b'{"command": "get_peaks"}\n')
                 line, buf = self._read_socket_line(sock, buf)
                 if line:
@@ -176,6 +198,9 @@ class WaveControllerClient:
                         with self._cache_lock:
                             self._cached_peaks = res["peaks"]
                             self._last_peaks_time = time.time()
+
+                if len(buf) > 32768:
+                    buf = ""
 
             except Exception:
                 try:
@@ -188,7 +213,7 @@ class WaveControllerClient:
                 time.sleep(0.10)
                 continue
 
-            time.sleep(0.025) # 40 FPS smooth streaming
+            time.sleep(0.033) # 30 FPS smooth streaming
 
     def send_command(self, cmd_dict: dict, timeout: float = 0.20) -> dict:
         """Sends an immediate synchronous JSON command to WaveController over command socket."""
@@ -208,7 +233,7 @@ class WaveControllerClient:
                     while "\n" not in raw_res:
                         chunk = self._cmd_sock.recv(4096).decode("utf-8")
                         if not chunk:
-                            break
+                            raise ConnectionResetError("Command socket EOF")
                         raw_res += chunk
 
                     if raw_res:
@@ -227,13 +252,18 @@ class WaveControllerClient:
             return {}
 
     def _send_command_async(self, cmd_dict: dict):
-        """Dispatches an IPC command asynchronously in background without blocking UI."""
-        def worker():
+        """Enqueues an IPC command sequentially without spawning threads or blocking UI."""
+        try:
+            self._async_queue.put_nowait(cmd_dict)
+        except queue.Full:
             try:
-                self.send_command(cmd_dict, timeout=0.30)
+                self._async_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._async_queue.put_nowait(cmd_dict)
             except Exception:
                 pass
-        threading.Thread(target=worker, daemon=True).start()
 
     def get_channels_and_mixes(self, force: bool = False) -> dict:
         """Instantly returns active channels, mixes, and states from memory."""

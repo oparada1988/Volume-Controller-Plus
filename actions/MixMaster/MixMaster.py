@@ -35,6 +35,8 @@ class MixMaster(WaveControllerBaseAction):
         return m
 
     def initial_load_status(self):
+        if time.time() - getattr(self, "_last_volume_adjust_time", 0.0) < 0.40:
+            return
         m_id = self.get_configured_mix_id()
         vol, muted = self.client.get_mix_master_volume(m_id)
         self.current_volume = int(vol) if vol is not None else 100

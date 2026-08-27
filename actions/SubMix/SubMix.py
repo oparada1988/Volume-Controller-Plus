@@ -46,6 +46,8 @@ class SubMix(WaveControllerBaseAction):
         return ch
 
     def initial_load_status(self):
+        if time.time() - getattr(self, "_last_volume_adjust_time", 0.0) < 0.40:
+            return
         ch_id = self.get_configured_channel_id()
         m_id = self.get_configured_mix_id()
         vol, muted = self.client.get_channel_volume(ch_id, mix_id=m_id)

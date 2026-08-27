@@ -20,6 +20,8 @@ class ChannelMaster(WaveControllerBaseAction):
         self._updating_channel_dropdown = False
 
     def initial_load_status(self):
+        if time.time() - getattr(self, "_last_volume_adjust_time", 0.0) < 0.40:
+            return
         settings = self.get_settings() or {}
         ch_id = self.get_configured_channel_id()
         vol, muted = self.client.get_channel_volume(ch_id)
@@ -135,20 +137,18 @@ class ChannelMaster(WaveControllerBaseAction):
         if not is_wave:
             return None
 
-        hw = self.client.get_hardware_status()
+        hw = self.client.get_hardware_status() or {}
         dev_name = hw.get("device_name", "").lower()
-        if "xlr" not in dev_name and "wave" not in dev_name and ch_id.lower() not in ("mic", "microphone"):
-            return None
-
         elgato_info = hw.get("elgato_info", {})
+
         is_online = hw.get("is_connected")
         if is_online is None or is_online is False:
             if elgato_info and elgato_info.get("connected"):
                 is_online = True
-            elif bool(dev_name) and hw.get("gain_db") is not None:
+            elif ("xlr" in dev_name or "wave" in dev_name) and hw.get("gain_db") is not None:
                 is_online = True
             else:
-                is_online = self.client.is_connected()
+                is_online = False
         else:
             is_online = bool(is_online)
 
