@@ -61,7 +61,10 @@ class ChannelMaster(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
         c = self._match_channel(ch_id, channels)
-        return c.get("name", ch_id.capitalize()), "Master"
+        name = c.get("name", ch_id.capitalize())
+        if name.startswith("Elgato "):
+            name = name[len("Elgato "):]
+        return name, "Master"
 
     def get_target_icon_path(self) -> str:
         ch_id = self.get_configured_channel_id()
@@ -208,7 +211,9 @@ class ChannelMaster(WaveControllerBaseAction):
             self.channels_list = []
             if channels:
                 for c in channels:
-                    self.channels_list.append((c["id"], c.get("name", c["id"].capitalize())))
+                    name = c.get("name", c["id"].capitalize())
+                    clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                    self.channels_list.append((c["id"], clean_name))
             else:
                 self.channels_list = [("mic", "Microphone"), ("spotify", "Spotify")]
 

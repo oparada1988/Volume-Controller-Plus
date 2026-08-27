@@ -21,6 +21,7 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, Adw, GLib
 from .WaveControllerClient import WaveControllerClient
 
 RENDER_SCALE = 2
+ADJUSTING_TIMEOUT = 2.0  # 1:1 synchronization with WaveController's 2.0s hardware LED peek
 
 class WaveControllerBaseAction(ActionBase):
     """
@@ -456,6 +457,8 @@ class WaveControllerBaseAction(ActionBase):
         
         target_title, target_subtitle = self.get_target_title_and_subtitle()
         title_text = target_title
+        if title_text.startswith("Elgato "):
+            title_text = title_text[len("Elgato "):]
         
         effective_icon_identifier = custom_icon_path if custom_icon_path else self.get_target_icon_path()
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
@@ -734,7 +737,7 @@ class WaveControllerBaseAction(ActionBase):
         
         if not is_muted:
             now = time.time()
-            is_adjusting = (now - self._last_volume_adjust_time) < 1.2
+            is_adjusting = (now - self._last_volume_adjust_time) < ADJUSTING_TIMEOUT
             
             if is_adjusting:
                 vol_angle = int(210 + 120 * (volume / 100.0))
@@ -824,7 +827,7 @@ class WaveControllerBaseAction(ActionBase):
         if not force and (now - getattr(self, "_last_render_time", 0.0) < 0.033):
             return
 
-        is_adjusting = (now - self._last_volume_adjust_time) < 1.2
+        is_adjusting = (now - self._last_volume_adjust_time) < ADJUSTING_TIMEOUT
         adjust_changed = (is_adjusting != getattr(self, "_last_drawn_adjusting", False))
         
         vol_changed = (self.current_volume != self.last_drawn_volume)
@@ -835,6 +838,8 @@ class WaveControllerBaseAction(ActionBase):
         custom_icon = settings.get("custom_icon", "")
         target_title, _ = self.get_target_title_and_subtitle()
         title_text = target_title
+        if title_text.startswith("Elgato "):
+            title_text = title_text[len("Elgato "):]
         effective_icon = custom_icon if custom_icon else self.get_target_icon_path()
         
         title_changed = (title_text != getattr(self, "last_drawn_title", None))

@@ -99,6 +99,8 @@ class SubMix(WaveControllerBaseAction):
         m = self._match_mix(m_id, mixes)
 
         ch_name = c.get("name", ch_id.capitalize())
+        if ch_name.startswith("Elgato "):
+            ch_name = ch_name[len("Elgato "):]
         mix_name = m.get("name", m_id.capitalize())
 
         return ch_name, mix_name
@@ -211,7 +213,9 @@ class SubMix(WaveControllerBaseAction):
             self.channels_list = []
             if channels:
                 for c in channels:
-                    self.channels_list.append((c["id"], c.get("name", c["id"].capitalize())))
+                    name = c.get("name", c["id"].capitalize())
+                    clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                    self.channels_list.append((c["id"], clean_name))
             else:
                 self.channels_list = [("spotify", "Spotify"), ("fefine", "Fefine")]
 
