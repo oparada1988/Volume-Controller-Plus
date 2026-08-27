@@ -12,6 +12,8 @@ class ChannelMaster(WaveControllerBaseAction):
     Channel Master Fader Action.
     Controls global volume, mute, and live stereo VU meter for a specific audio channel.
     """
+    action_description = "Master volume fader, mute toggle, and real-time VU peak metering for an input channel."
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.channels_list = []
@@ -66,7 +68,13 @@ class ChannelMaster(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
         c = self._match_channel(ch_id, channels)
-        if c.get("icon"):
+        if c.get("icon") and c.get("icon") not in ("network-offline-symbolic",):
+            # If it's a mic channel with generic icon, verify if Wave XLR is attached
+            if ch_id.lower() in ("mic", "microphone") and c.get("icon") == "audio-input-microphone-symbolic":
+                hw_status = self.client.get_hardware_status()
+                dev_name = hw_status.get("device_name", "").lower()
+                if "xlr" in dev_name or "wave" in dev_name:
+                    return "elgato-wave-xlr-symbolic"
             return c.get("icon")
         
         assigned_map = data.get("assigned_apps", {})
@@ -86,7 +94,11 @@ class ChannelMaster(WaveControllerBaseAction):
             elif "vlc" in app_low:
                 return "vlc"
 
-        if ch_id.lower() in ("mic", "microphone", "fefine", "fifine"):
+        if ch_id.lower() in ("mic", "microphone", "fefine", "fifine", "wave"):
+            hw_status = self.client.get_hardware_status()
+            dev_name = hw_status.get("device_name", "").lower()
+            if "xlr" in dev_name or "wave" in dev_name:
+                return "elgato-wave-xlr-symbolic"
             return "audio-input-microphone-symbolic"
         return "audio-volume-high-symbolic"
 

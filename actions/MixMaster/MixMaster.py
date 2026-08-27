@@ -14,6 +14,8 @@ class MixMaster(WaveControllerBaseAction):
     Controls overall mix bus master output volume, master mute, and destination output device routing
     (1:1 with WaveController top Mix Header Cards).
     """
+    action_description = "Master output bus volume, mute toggle, and physical audio output device routing."
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mixes_list = []

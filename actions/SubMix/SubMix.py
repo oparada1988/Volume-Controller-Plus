@@ -13,6 +13,8 @@ class SubMix(WaveControllerBaseAction):
     Controls a specific audio channel's independent send level & mute state
     within a designated virtual mix bus (1:1 with WaveController Matrix Cells).
     """
+    action_description = "Independent send level of a channel into a specific mix matrix (1:1 with WaveController matrix cells)."
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mixes_list = []
@@ -106,7 +108,12 @@ class SubMix(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
         c = self._match_channel(ch_id, channels)
-        if c.get("icon"):
+        if c.get("icon") and c.get("icon") not in ("network-offline-symbolic",):
+            if ch_id.lower() in ("mic", "microphone") and c.get("icon") == "audio-input-microphone-symbolic":
+                hw_status = self.client.get_hardware_status()
+                dev_name = hw_status.get("device_name", "").lower()
+                if "xlr" in dev_name or "wave" in dev_name:
+                    return "elgato-wave-xlr-symbolic"
             return c.get("icon")
         
         assigned_map = data.get("assigned_apps", {})
@@ -126,7 +133,11 @@ class SubMix(WaveControllerBaseAction):
             elif "vlc" in app_low:
                 return "vlc"
 
-        if ch_id.lower() in ("mic", "microphone", "fefine", "fifine"):
+        if ch_id.lower() in ("mic", "microphone", "fefine", "fifine", "wave"):
+            hw_status = self.client.get_hardware_status()
+            dev_name = hw_status.get("device_name", "").lower()
+            if "xlr" in dev_name or "wave" in dev_name:
+                return "elgato-wave-xlr-symbolic"
             return "audio-input-microphone-symbolic"
         return "audio-volume-high-symbolic"
 

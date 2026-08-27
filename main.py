@@ -32,7 +32,7 @@ class PluginTemplate(PluginBase):
             plugin_base = self,
             action_base = ChannelMaster,
             action_id = "com_oparada_WaveControllerPlugin::ChannelMaster",
-            action_name = "Channel Fader",
+            action_name = "Channel",
             icon = icon_img,
             action_support = supported_inputs
         )
@@ -43,7 +43,7 @@ class PluginTemplate(PluginBase):
             plugin_base = self,
             action_base = SubMix,
             action_id = "com_oparada_WaveControllerPlugin::SubMix",
-            action_name = "Sub-Mix Fader",
+            action_name = "Sub-Mix",
             icon = icon_img,
             action_support = supported_inputs
         )
@@ -54,7 +54,7 @@ class PluginTemplate(PluginBase):
             plugin_base = self,
             action_base = MixMaster,
             action_id = "com_oparada_WaveControllerPlugin::MixMaster",
-            action_name = "Mix Master Output",
+            action_name = "Master Mix",
             icon = icon_img,
             action_support = supported_inputs
         )
@@ -62,15 +62,15 @@ class PluginTemplate(PluginBase):
 
         # Register plugin
         self.register(
-            plugin_name = "WaveController for StreamController",
+            plugin_name = "WaveController",
             github_repo = "https://github.com/oparada1988/WaveController",
-            plugin_version = "1.0.0",
+            plugin_version = "1.2.0",
             app_version = "1.0.0-alpha"
         )
 
-        # Apply robust Gtk/StreamController bug workarounds
+        # Apply robust Gtk/StreamController bug workarounds & enhancements
         try:
-            from src.windows.mainWindow.elements.Sidebar.elements.ActionConfigurator import CommentGroup
+            from src.windows.mainWindow.elements.Sidebar.elements.ActionConfigurator import CommentGroup, ConfigGroup
             
             # 1. Prevent TypeError: nothing connected
             original_disconnect = CommentGroup.disconnect_signals
@@ -91,6 +91,14 @@ class PluginTemplate(PluginBase):
                 except Exception:
                     return ""
             CommentGroup.get_comment = safe_get_comment
+
+            # 3. Dynamic Action Description in Configuration Header
+            original_load_for_action = ConfigGroup.load_for_action
+            def safe_load_for_action(self, action):
+                original_load_for_action(self, action)
+                if hasattr(action, "action_description") and action.action_description:
+                    self.set_description(action.action_description)
+            ConfigGroup.load_for_action = safe_load_for_action
             
         except Exception:
             pass
