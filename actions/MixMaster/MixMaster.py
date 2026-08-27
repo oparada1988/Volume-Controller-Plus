@@ -140,8 +140,6 @@ class MixMaster(WaveControllerBaseAction):
         m_id = self.get_configured_mix_id()
         peaks = self.client.get_peaks()
         val = peaks.get(f"{m_id}_mix", peaks.get(m_id, peaks.get("master")))
-        if val is None:
-            val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
         return self._extract_peak_value(val)
 
     def update_dropdowns(self):

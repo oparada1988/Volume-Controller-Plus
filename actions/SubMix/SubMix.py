@@ -161,6 +161,12 @@ class SubMix(WaveControllerBaseAction):
 
     def get_current_peak_val(self) -> float:
         ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        # Verify if channel is actually enabled in this mix
+        data = self.client.get_channels_and_mixes()
+        states = data.get("states", {})
+        if not states.get(ch_id, {}).get(m_id, {}).get("enabled", True):
+            return 0.0
         peaks = self.client.get_peaks()
         val = peaks.get(ch_id)
         if val is None:
@@ -168,8 +174,6 @@ class SubMix(WaveControllerBaseAction):
                 if k.lower() == ch_id.lower() or k.lower() in ch_id.lower() or ch_id.lower() in k.lower():
                     val = v
                     break
-        if val is None and ch_id.lower() not in ("mic", "microphone", "input"):
-            val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
         return self._extract_peak_value(val)
 
     def _rebuild_channel_dropdown(self, mix_id: str, channels: list = None, states: dict = None, settings: dict = None):

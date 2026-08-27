@@ -195,8 +195,6 @@ class ChannelMaster(WaveControllerBaseAction):
                 if k.lower() == ch_id.lower() or k.lower() in ch_id.lower() or ch_id.lower() in k.lower():
                     val = v
                     break
-        if val is None and ch_id.lower() not in ("mic", "microphone", "input"):
-            val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
         return self._extract_peak_value(val)
 
     def update_channel_dropdown(self):
