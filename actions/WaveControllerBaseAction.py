@@ -173,6 +173,14 @@ class WaveControllerBaseAction(ActionBase):
             return float(val)
         return 0.0
 
+    def get_hardware_telemetry_info(self):
+        """Override in subclasses to provide hardware telemetry (e.g. Wave XLR)."""
+        return None
+
+    def handle_touch_tap(self, data: dict) -> bool:
+        """Override in subclasses to intercept touchscreen events (e.g. 48V badge toggle)."""
+        return False
+
     def event_callback(self, event: InputEvent, data: dict = None):
         if event == Input.Dial.Events.TURN_CW:
             step_val = self.get_step_size()
@@ -181,11 +189,16 @@ class WaveControllerBaseAction(ActionBase):
             step_val = self.get_step_size()
             self.handle_volume_change(-step_val)
         elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS):
+            if event == Input.Dial.Events.SHORT_TOUCH_PRESS and data and isinstance(data, dict):
+                if self.handle_touch_tap(data):
+                    return
             self.handle_mute_toggle()
         elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
             getattr(Input.Touchscreen.Events, "SHORT_PRESS", None),
             getattr(Input.Touchscreen.Events, "TAP", None)
         ):
+            if data and isinstance(data, dict) and self.handle_touch_tap(data):
+                return
             self.handle_mute_toggle()
 
     def on_tick_update(self) -> bool:
@@ -448,6 +461,7 @@ class WaveControllerBaseAction(ActionBase):
         font_name = settings.get("font_name", "DejaVu Sans Bold 15")
         font_path = settings.get("font_path", "")
 
+        telemetry_info = self.get_hardware_telemetry_info()
         midground_key = (
             volume,
             is_muted,
@@ -455,7 +469,8 @@ class WaveControllerBaseAction(ActionBase):
             effective_icon_identifier,
             volume_format,
             font_name,
-            font_path
+            font_path,
+            tuple(sorted(telemetry_info.items())) if isinstance(telemetry_info, dict) else None
         )
 
         cx, cy = 70 * RENDER_SCALE, 104 * RENDER_SCALE
@@ -529,20 +544,71 @@ class WaveControllerBaseAction(ActionBase):
                 if font_file:
                     self._cached_font_title = ImageFont.truetype(font_file, int(title_font_size * RENDER_SCALE))
                     self._cached_font_vol = ImageFont.truetype(font_file, int(vol_font_size * RENDER_SCALE))
+                    self._cached_font_badge_sm = ImageFont.truetype(font_file, int(8.5 * RENDER_SCALE))
+                    self._cached_font_badge_md = ImageFont.truetype(font_file, int(10 * RENDER_SCALE))
+                    self._cached_font_vol_wave = ImageFont.truetype(font_file, int(17 * RENDER_SCALE))
                 else:
                     self._cached_font_title = ImageFont.load_default()
                     self._cached_font_vol = ImageFont.load_default()
+                    self._cached_font_badge_sm = ImageFont.load_default()
+                    self._cached_font_badge_md = ImageFont.load_default()
+                    self._cached_font_vol_wave = ImageFont.load_default()
             except Exception:
                 self._cached_font_title = ImageFont.load_default()
                 self._cached_font_vol = ImageFont.load_default()
+                self._cached_font_badge_sm = ImageFont.load_default()
+                self._cached_font_badge_md = ImageFont.load_default()
+                self._cached_font_vol_wave = ImageFont.load_default()
 
             font_title = self._cached_font_title
             font_vol = self._cached_font_vol
+            font_badge_sm = getattr(self, "_cached_font_badge_sm", font_title)
+            font_badge_md = getattr(self, "_cached_font_badge_md", font_title)
+            font_vol_wave = getattr(self, "_cached_font_vol_wave", font_vol)
 
-            try:
-                mid_draw.text((165 * RENDER_SCALE, 64 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
-            except TypeError:
-                mid_draw.text((int((165 - 20) * RENDER_SCALE), int((64 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
+            # Draw Right-Column Elements (3-Slot Telemetry vs Standard)
+            if telemetry_info and isinstance(telemetry_info, dict) and telemetry_info.get("is_hardware"):
+                # --- Extended 3-Slot Telemetry Layout (Wave XLR / Hardware Only) ---
+                is_online = telemetry_info.get("is_online", True)
+                phantom_48v = telemetry_info.get("phantom_48v", False)
+
+                # Slot 1: Connection Status Badge (Center: 165, 34)
+                s1_x, s1_y = 165 * RENDER_SCALE, 34 * RENDER_SCALE
+                s1_w, s1_h = 48 * RENDER_SCALE, 15 * RENDER_SCALE
+                s1_bbox = [
+                    (s1_x - s1_w / 2, s1_y - s1_h / 2),
+                    (s1_x + s1_w / 2, s1_y + s1_h / 2)
+                ]
+                if is_online:
+                    mid_draw.rounded_rectangle(s1_bbox, radius=4 * RENDER_SCALE, fill=(61, 179, 86, 55), outline=(74, 222, 128, 160), width=max(1, int(1 * RENDER_SCALE)))
+                    mid_draw.text((s1_x, s1_y), "ONLINE", font=font_badge_sm, fill=(74, 222, 128, 255), anchor="mm")
+                else:
+                    mid_draw.rounded_rectangle(s1_bbox, radius=4 * RENDER_SCALE, fill=(245, 158, 11, 45), outline=(251, 191, 36, 160), width=max(1, int(1 * RENDER_SCALE)))
+                    mid_draw.text((s1_x, s1_y), "OFFLINE", font=font_badge_sm, fill=(251, 191, 36, 255), anchor="mm")
+
+                # Slot 2: 48V Phantom Power Badge (Center: 165, 57)
+                s2_x, s2_y = 165 * RENDER_SCALE, 57 * RENDER_SCALE
+                s2_w, s2_h = 44 * RENDER_SCALE, 17 * RENDER_SCALE
+                s2_bbox = [
+                    (s2_x - s2_w / 2, s2_y - s2_h / 2),
+                    (s2_x + s2_w / 2, s2_y + s2_h / 2)
+                ]
+                if phantom_48v:
+                    mid_draw.rounded_rectangle(s2_bbox, radius=4 * RENDER_SCALE, fill=(245, 158, 11, 70), outline=(251, 191, 36, 220), width=max(1, int(1.2 * RENDER_SCALE)))
+                    mid_draw.text((s2_x, s2_y), "⚡48V", font=font_badge_md, fill=(251, 191, 36, 255), anchor="mm")
+                else:
+                    mid_draw.rounded_rectangle(s2_bbox, radius=4 * RENDER_SCALE, fill=(255, 255, 255, 15), outline=(255, 255, 255, 45), width=max(1, int(1 * RENDER_SCALE)))
+                    mid_draw.text((s2_x, s2_y), "48V", font=font_badge_md, fill=(255, 255, 255, 95), anchor="mm")
+
+                # Slot 3: Volume / Gain Readout (Center: 165, 82)
+                s3_x, s3_y = 165 * RENDER_SCALE, 82 * RENDER_SCALE
+                mid_draw.text((s3_x, s3_y), vol_text, font=font_vol_wave, fill=vol_color, anchor="mm")
+            else:
+                # --- Standard Layout (Generic Channels: Spotify, Discord, Sub-Mix, etc.) ---
+                try:
+                    mid_draw.text((165 * RENDER_SCALE, 64 * RENDER_SCALE), vol_text, font=font_vol, fill=vol_color, anchor="mm")
+                except TypeError:
+                    mid_draw.text((int((165 - 20) * RENDER_SCALE), int((64 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
 
             # Icon Placement & Rendering
             icon_drawn = False
@@ -701,11 +767,12 @@ class WaveControllerBaseAction(ActionBase):
                 else:
                     vol_angle = int(210 + 120 * (volume / 100.0))
                     if vol_angle > 210:
-                        draw.arc(bbox, start=210, end=vol_angle, fill=(0, 168, 255, 255), width=arc_w)
+                        arc_fill = (120, 120, 120, 160) if (telemetry_info and not telemetry_info.get("is_online", True)) else (0, 168, 255, 255)
+                        draw.arc(bbox, start=210, end=vol_angle, fill=arc_fill, width=arc_w)
                         rad_e = math.radians(vol_angle)
                         xe = cx + r_arc_center * math.cos(rad_e)
                         ye = cy + r_arc_center * math.sin(rad_e)
-                        draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(0, 168, 255, 255))
+                        draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=arc_fill)
 
         # 4. Draw Rotating Pointer Notch on Inner Knob
         pointer_angle = 210 + 120 * (volume / 100.0)
@@ -760,7 +827,10 @@ class WaveControllerBaseAction(ActionBase):
         title_changed = (title_text != getattr(self, "last_drawn_title", None))
         icon_changed = (effective_icon != getattr(self, "last_drawn_icon", None))
         
-        if force or vol_changed or mute_changed or adjust_changed or title_changed or icon_changed or (peak_changed and not is_adjusting):
+        telemetry_info = self.get_hardware_telemetry_info()
+        telemetry_changed = (telemetry_info != getattr(self, "last_drawn_telemetry", None))
+        
+        if force or vol_changed or mute_changed or adjust_changed or title_changed or icon_changed or telemetry_changed or (peak_changed and not is_adjusting):
             with self._render_lock:
                 self._last_render_time = now
                 self.last_drawn_volume = self.current_volume
@@ -770,6 +840,7 @@ class WaveControllerBaseAction(ActionBase):
                 self._last_drawn_adjusting = is_adjusting
                 self.last_drawn_title = title_text
                 self.last_drawn_icon = effective_icon
+                self.last_drawn_telemetry = telemetry_info
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak)
                 try:

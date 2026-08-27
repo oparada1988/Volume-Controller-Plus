@@ -31,6 +31,7 @@ class WaveControllerClient:
         self._cached_channels_data = None
         self._last_channels_time = 0.0
         self._cached_devices = []
+        self._cached_hardware_status = {}
 
         self._cmd_sock = None
         self._cmd_lock = threading.Lock()
@@ -118,6 +119,7 @@ class WaveControllerClient:
         buf = ""
         last_channels_poll = 0.0
         last_devices_poll = 0.0
+        last_hardware_poll = 0.0
 
         while self._running:
             if sock is None:
@@ -154,7 +156,18 @@ class WaveControllerClient:
                             with self._cache_lock:
                                 self._cached_devices = res.get("devices", [])
 
-                # 3. High-frequency live VU peak poll (every ~25ms / 40 FPS)
+                # 3. Periodic hardware status refresh (every 200ms)
+                if now - last_hardware_poll > 0.20:
+                    last_hardware_poll = now
+                    sock.sendall(b'{"command": "get_hardware_status"}\n')
+                    line, buf = self._read_socket_line(sock, buf)
+                    if line:
+                        res = json.loads(line)
+                        if res.get("status") == "ok" or "device_name" in res:
+                            with self._cache_lock:
+                                self._cached_hardware_status = res
+
+                # 4. High-frequency live VU peak poll (every ~25ms / 40 FPS)
                 sock.sendall(b'{"command": "get_peaks"}\n')
                 line, buf = self._read_socket_line(sock, buf)
                 if line:
@@ -355,6 +368,29 @@ class WaveControllerClient:
         """Instantly returns the latest audio peaks dictionary from memory in 0ms."""
         with self._cache_lock:
             return dict(self._cached_peaks)
+
+    def get_hardware_status(self) -> dict:
+        """Instantly returns the latest hardware status (phantom power, connection, gain) from memory."""
+        with self._cache_lock:
+            if self._cached_hardware_status:
+                return dict(self._cached_hardware_status)
+        res = self.send_command({"command": "get_hardware_status"}, timeout=0.15)
+        if res and (res.get("status") == "ok" or "device_name" in res):
+            with self._cache_lock:
+                self._cached_hardware_status = res
+            return res
+        return {}
+
+    def toggle_phantom_power(self) -> bool:
+        """Toggles 48V phantom power on hardware with instant cached reflection."""
+        with self._cache_lock:
+            curr = self._cached_hardware_status.get("phantom_48v", False)
+            self._cached_hardware_status["phantom_48v"] = not curr
+        res = self.send_command({"command": "toggle_phantom_power"}, timeout=0.25)
+        new_val = res.get("phantom_48v", not curr)
+        with self._cache_lock:
+            self._cached_hardware_status["phantom_48v"] = new_val
+        return new_val
 
     def is_connected(self) -> bool:
         """Checks if WaveController IPC socket is active."""

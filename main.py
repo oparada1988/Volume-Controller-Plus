@@ -20,42 +20,46 @@ class PluginTemplate(PluginBase):
     def __init__(self):
         super().__init__()
 
-        icon_img = Gtk.Image(file=os.path.join(self.PATH, "assets", "Action_icon.png"))
         supported_inputs = {
             Input.Key: ActionInputSupport.UNSUPPORTED,
             Input.Dial: ActionInputSupport.SUPPORTED,
             Input.Touchscreen: ActionInputSupport.SUPPORTED
         }
 
-        # 1. Channel Master Action
+        # Distinct Option 1 Action Icons
+        channel_icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "icons", "audio-input-microphone.png"))
+        sub_mix_icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "tune.png"))
+        master_mix_icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "icons", "audio-headphones.png"))
+
+        # 1. Channel Action
         self.channel_master_holder = ActionHolder(
             plugin_base = self,
             action_base = ChannelMaster,
             action_id = "com_oparada_WaveControllerPlugin::ChannelMaster",
             action_name = "Channel",
-            icon = icon_img,
+            icon = channel_icon,
             action_support = supported_inputs
         )
         self.add_action_holder(self.channel_master_holder)
 
-        # 2. Sub-Mix Fader Action
+        # 2. Sub-Mix Action
         self.sub_mix_holder = ActionHolder(
             plugin_base = self,
             action_base = SubMix,
             action_id = "com_oparada_WaveControllerPlugin::SubMix",
             action_name = "Sub-Mix",
-            icon = icon_img,
+            icon = sub_mix_icon,
             action_support = supported_inputs
         )
         self.add_action_holder(self.sub_mix_holder)
 
-        # 3. Mix Master Output Action
+        # 3. Master Mix Action
         self.mix_master_holder = ActionHolder(
             plugin_base = self,
             action_base = MixMaster,
             action_id = "com_oparada_WaveControllerPlugin::MixMaster",
             action_name = "Master Mix",
-            icon = icon_img,
+            icon = master_mix_icon,
             action_support = supported_inputs
         )
         self.add_action_holder(self.mix_master_holder)

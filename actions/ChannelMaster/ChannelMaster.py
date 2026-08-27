@@ -116,6 +116,60 @@ class ChannelMaster(WaveControllerBaseAction):
         self.last_mute = new_mute
         self.update_ui_rendering(force=True)
 
+    def get_hardware_telemetry_info(self):
+        ch_id = self.get_configured_channel_id()
+        data = self.client.get_channels_and_mixes()
+        channels = data.get("channels", [])
+        c = self._match_channel(ch_id, channels)
+        icon = c.get("icon", "")
+
+        is_wave = (
+            ch_id.lower() in ("mic", "microphone", "wave_xlr", "elgato_wave_xlr") or
+            "xlr" in ch_id.lower() or
+            "wave" in ch_id.lower() or
+            icon == "elgato-wave-xlr-symbolic"
+        )
+        if not is_wave:
+            return None
+
+        hw = self.client.get_hardware_status()
+        dev_name = hw.get("device_name", "").lower()
+        if "xlr" not in dev_name and "wave" not in dev_name and ch_id.lower() not in ("mic", "microphone"):
+            return None
+
+        is_online = hw.get("is_connected", self.client.is_connected())
+        phantom_48v = hw.get("phantom_48v", False)
+
+        return {
+            "is_hardware": True,
+            "is_online": is_online,
+            "phantom_48v": phantom_48v,
+            "gain_db": hw.get("gain_db", 0)
+        }
+
+    def handle_touch_tap(self, data: dict) -> bool:
+        """Handles touchscreen taps. Tapping the 48V badge (Slot 2) toggles phantom power."""
+        telemetry = self.get_hardware_telemetry_info()
+        if not telemetry or not isinstance(data, dict):
+            return False
+
+        x = data.get("x")
+        y = data.get("y")
+        if x is None or y is None:
+            return False
+
+        # Stream Deck + dial screen slice width is 200px (4 dials x 200 = 800)
+        rel_x = x % 200
+        rel_y = y
+
+        # Slot 2 (48V badge) touch bounding box: rel_x in [130, 200], rel_y in [40, 75]
+        if rel_x >= 130 and 40 <= rel_y <= 75:
+            self.client.toggle_phantom_power()
+            self.update_ui_rendering(force=True)
+            return True
+
+        return False
+
     def get_current_peak_val(self) -> float:
         ch_id = self.get_configured_channel_id()
         peaks = self.client.get_peaks()
