@@ -155,41 +155,22 @@ class WaveControllerClient:
             try:
                 now = time.time()
 
-                # 1. Periodic full channel state refresh (every 200ms)
-                if now - last_channels_poll > 0.20:
+                # 1. Background channel topology & devices refresh (every 5 seconds, non-intrusive)
+                if now - last_channels_poll > 5.0:
                     last_channels_poll = now
-                    sock.sendall(b'{"command": "get_channels"}\n')
-                    line, buf = self._read_socket_line(sock, buf)
-                    if line:
-                        res = json.loads(line)
-                        if res.get("status") == "ok":
-                            with self._cache_lock:
-                                self._cached_channels_data = res
-                                self._last_channels_time = now
+                    try:
+                        sock.sendall(b'{"command": "get_channels"}\n')
+                        line, buf = self._read_socket_line(sock, buf)
+                        if line:
+                            res = json.loads(line)
+                            if res.get("status") == "ok":
+                                with self._cache_lock:
+                                    self._cached_channels_data = res
+                                    self._last_channels_time = now
+                    except Exception:
+                        pass
 
-                # 2. Periodic devices refresh (every 500ms)
-                if now - last_devices_poll > 0.50:
-                    last_devices_poll = now
-                    sock.sendall(b'{"command": "get_output_devices"}\n')
-                    line, buf = self._read_socket_line(sock, buf)
-                    if line:
-                        res = json.loads(line)
-                        if "devices" in res:
-                            with self._cache_lock:
-                                self._cached_devices = res.get("devices", [])
-
-                # 3. Periodic hardware status refresh (every 250ms)
-                if now - last_hardware_poll > 0.25:
-                    last_hardware_poll = now
-                    sock.sendall(b'{"command": "get_hardware_status"}\n')
-                    line, buf = self._read_socket_line(sock, buf)
-                    if line:
-                        res = json.loads(line)
-                        if res.get("status") == "ok" or "device_name" in res:
-                            with self._cache_lock:
-                                self._cached_hardware_status = res
-
-                # 4. High-frequency live VU peak & volume telemetry poll (every ~33ms / 30 FPS)
+                # 2. High-frequency atomic 30 FPS telemetry stream (peaks, volumes, and hardware status)
                 sock.sendall(b'{"command": "get_peaks"}\n')
                 line, buf = self._read_socket_line(sock, buf)
                 if line:
@@ -207,6 +188,8 @@ class WaveControllerClient:
                                 self._cached_channels_data["master_states"] = res["channel_master_states"]
                             if "channel_states" in res and isinstance(res["channel_states"], dict):
                                 self._cached_channels_data["states"] = res["channel_states"]
+                            if "hardware" in res and isinstance(res["hardware"], dict):
+                                self._cached_hardware_status = res["hardware"]
 
                 if len(buf) > 32768:
                     buf = ""

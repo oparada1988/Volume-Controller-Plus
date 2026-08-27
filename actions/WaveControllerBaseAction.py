@@ -750,15 +750,15 @@ class WaveControllerBaseAction(ActionBase):
             else:
                 is_live_enabled = settings.get("live_meter", True)
                 if is_live_enabled:
-                    if peak > 0.04:
-                        scaled_peak = peak * (volume / 100.0)
-                        peak_angle = int(210 + 120 * min(1.0, scaled_peak))
+                    if peak > 0.02:
+                        scaled_peak = min(1.0, max(0.0, peak))
+                        peak_angle = int(210 + 120 * scaled_peak)
                         if peak_angle > 210:
                             rad_e = math.radians(min(330, peak_angle))
                             xe = cx + r_arc_center * math.cos(rad_e)
                             ye = cy + r_arc_center * math.sin(rad_e)
                             
-                            if peak >= 0.99 or scaled_peak >= 0.99:
+                            if scaled_peak >= 0.98:
                                 draw.arc(bbox, start=210, end=min(330, peak_angle), fill=(255, 30, 30, 255), width=arc_w)
                                 draw.ellipse([(start_cap_x - cap_r, start_cap_y - cap_r), (start_cap_x + cap_r, start_cap_y + cap_r)], fill=(255, 30, 30, 255))
                                 draw.ellipse([(xe - cap_r, ye - cap_r), (xe + cap_r, ye + cap_r)], fill=(255, 30, 30, 255))
@@ -773,10 +773,10 @@ class WaveControllerBaseAction(ActionBase):
                                 grad_img_sub = self._get_gauge_gradient_image_sub(width, height, bbox)
                                 img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
 
-                    # Peak Hold Marker
+                    # Peak Hold Marker (Pre-fader true peak)
                     if self._peak_hold_val > 0.04:
-                        scaled_hold = self._peak_hold_val * (volume / 100.0)
-                        hold_angle = int(210 + 120 * min(1.0, scaled_hold))
+                        scaled_hold = min(1.0, max(0.0, self._peak_hold_val))
+                        hold_angle = int(210 + 120 * scaled_hold)
                         if hold_angle > 210:
                             draw.arc(bbox, start=max(210, hold_angle - 1), end=min(330, hold_angle + 1), fill=(255, 75, 75, 255), width=arc_w)
                 else:
