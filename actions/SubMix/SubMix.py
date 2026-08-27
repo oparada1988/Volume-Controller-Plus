@@ -195,11 +195,14 @@ class SubMix(WaveControllerBaseAction):
                 self.channels_list.append((c_id, clean_name))
 
         if not self.channels_list:
-            # Fallback to all channels if none are explicitly assigned
-            for c in channels:
-                name = c.get("name", c["id"].capitalize())
-                clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
-                self.channels_list.append((c["id"], clean_name))
+            if not states:
+                # Fallback to all channels ONLY if states is completely empty/unavailable
+                for c in channels:
+                    name = c.get("name", c["id"].capitalize())
+                    clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                    self.channels_list.append((c["id"], clean_name))
+            else:
+                self.channels_list = [("", "None (No Channels in Mix)")]
 
         self.channel_model = Gtk.StringList()
         for _, display_name in self.channels_list:
