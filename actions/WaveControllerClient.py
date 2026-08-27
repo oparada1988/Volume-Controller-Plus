@@ -252,6 +252,8 @@ class WaveControllerClient:
                     if st:
                         vol = st.get("volume", 80)
                         muted = st.get("muted", False)
+                        if not st.get("enabled", True):
+                            muted = True
                         return int(vol) if vol is not None else 80, bool(muted) if muted is not None else False
                 else:
                     st = self._cached_channels_data.get("master_states", {}).get(channel_id, {})
@@ -266,6 +268,8 @@ class WaveControllerClient:
             st = fallback.get("states", {}).get(channel_id, {}).get(mix_id, {})
             vol = st.get("volume", 80)
             muted = st.get("muted", False)
+            if not st.get("enabled", True):
+                muted = True
             return int(vol) if vol is not None else 80, bool(muted) if muted is not None else False
         else:
             st = fallback.get("master_states", {}).get(channel_id, {})

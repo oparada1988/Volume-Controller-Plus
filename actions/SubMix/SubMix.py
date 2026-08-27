@@ -172,6 +172,55 @@ class SubMix(WaveControllerBaseAction):
             val = peaks.get("system", peaks.get("spotify", peaks.get("music")))
         return self._extract_peak_value(val)
 
+    def _rebuild_channel_dropdown(self, mix_id: str, channels: list = None, states: dict = None, settings: dict = None):
+        if not hasattr(self, "channel_selector"):
+            return
+        if settings is None:
+            settings = self.get_settings() or {}
+        if channels is None or states is None:
+            data = self.client.get_channels_and_mixes(force=False)
+            channels = data.get("channels", [])
+            states = data.get("states", {})
+
+        self.channels_list = []
+        if channels:
+            for c in channels:
+                c_id = c["id"]
+                # Exclude channels not assigned to this master mix (enabled: false)
+                ch_st = states.get(c_id, {}).get(mix_id, {})
+                if ch_st and not ch_st.get("enabled", True):
+                    continue
+                name = c.get("name", c_id.capitalize())
+                clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                self.channels_list.append((c_id, clean_name))
+
+        if not self.channels_list:
+            # Fallback to all channels if none are explicitly assigned
+            for c in channels:
+                name = c.get("name", c["id"].capitalize())
+                clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                self.channels_list.append((c["id"], clean_name))
+
+        self.channel_model = Gtk.StringList()
+        for _, display_name in self.channels_list:
+            self.channel_model.append(display_name)
+        self.channel_selector.set_model(self.channel_model)
+
+        current_ch = settings.get("channel_id")
+        ch_idx = 0
+        found = False
+        if current_ch:
+            for idx, (cid, _) in enumerate(self.channels_list):
+                if cid == current_ch:
+                    ch_idx = idx
+                    found = True
+                    break
+        if not found and self.channels_list:
+            settings["channel_id"] = self.channels_list[0][0]
+            settings["channel_name"] = self.channels_list[0][1]
+
+        self.channel_selector.set_selected(ch_idx)
+
     def update_dropdowns(self):
         if not hasattr(self, "mix_selector") or not hasattr(self, "channel_selector"):
             return
@@ -181,6 +230,7 @@ class SubMix(WaveControllerBaseAction):
             data = self.client.get_channels_and_mixes(force=True)
             channels = data.get("channels", [])
             mixes = data.get("mixes", [])
+            states = data.get("states", {})
 
             # 1. Populate Mixes
             self.mixes_list = []
@@ -208,35 +258,10 @@ class SubMix(WaveControllerBaseAction):
                     settings["mix_name"] = self.mixes_list[0][1]
 
             self.mix_selector.set_selected(mix_idx)
+            selected_mix_id = self.mixes_list[mix_idx][0] if self.mixes_list else ""
 
-            # 2. Populate Channels
-            self.channels_list = []
-            if channels:
-                for c in channels:
-                    name = c.get("name", c["id"].capitalize())
-                    clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
-                    self.channels_list.append((c["id"], clean_name))
-            else:
-                self.channels_list = [("spotify", "Spotify"), ("fefine", "Fefine")]
-
-            self.channel_model = Gtk.StringList()
-            for _, display_name in self.channels_list:
-                self.channel_model.append(display_name)
-            self.channel_selector.set_model(self.channel_model)
-
-            current_ch = settings.get("channel_id")
-            ch_idx = 0
-            if current_ch:
-                for idx, (cid, _) in enumerate(self.channels_list):
-                    if cid == current_ch:
-                        ch_idx = idx
-                        break
-            else:
-                if self.channels_list:
-                    settings["channel_id"] = self.channels_list[0][0]
-                    settings["channel_name"] = self.channels_list[0][1]
-
-            self.channel_selector.set_selected(ch_idx)
+            # 2. Populate Channels filtered by selected_mix_id
+            self._rebuild_channel_dropdown(selected_mix_id, channels=channels, states=states, settings=settings)
             self.set_settings(settings)
         finally:
             self._updating_dropdowns = False
@@ -250,6 +275,11 @@ class SubMix(WaveControllerBaseAction):
             settings = self.get_settings() or {}
             settings["mix_id"] = m_id
             settings["mix_name"] = m_name
+            self._updating_dropdowns = True
+            try:
+                self._rebuild_channel_dropdown(m_id, settings=settings)
+            finally:
+                self._updating_dropdowns = False
             self.set_settings(settings)
             self._cached_midground = None
             self.initial_load_status()
