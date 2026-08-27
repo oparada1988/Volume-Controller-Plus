@@ -189,15 +189,24 @@ class WaveControllerClient:
                             with self._cache_lock:
                                 self._cached_hardware_status = res
 
-                # 4. High-frequency live VU peak poll (every ~33ms / 30 FPS)
+                # 4. High-frequency live VU peak & volume telemetry poll (every ~33ms / 30 FPS)
                 sock.sendall(b'{"command": "get_peaks"}\n')
                 line, buf = self._read_socket_line(sock, buf)
                 if line:
                     res = json.loads(line)
-                    if res.get("status") == "ok" and "peaks" in res:
+                    if res.get("status") == "ok":
                         with self._cache_lock:
-                            self._cached_peaks = res["peaks"]
-                            self._last_peaks_time = time.time()
+                            if "peaks" in res:
+                                self._cached_peaks = res["peaks"]
+                                self._last_peaks_time = time.time()
+                            if not self._cached_channels_data:
+                                self._cached_channels_data = self._load_config_fallback() or {}
+                            if "mix_states" in res and isinstance(res["mix_states"], dict):
+                                self._cached_channels_data["mix_states"] = res["mix_states"]
+                            if "channel_master_states" in res and isinstance(res["channel_master_states"], dict):
+                                self._cached_channels_data["master_states"] = res["channel_master_states"]
+                            if "channel_states" in res and isinstance(res["channel_states"], dict):
+                                self._cached_channels_data["states"] = res["channel_states"]
 
                 if len(buf) > 32768:
                     buf = ""

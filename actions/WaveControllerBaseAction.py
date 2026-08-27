@@ -207,10 +207,9 @@ class WaveControllerBaseAction(ActionBase):
             return False
 
         now = time.time()
-        # Fast 80ms poll from WaveController for 1:1 fader responsiveness
-        if now - self.last_poll_time > 0.08:
-            self.last_poll_time = now
-            self.initial_load_status()
+        # High-speed in-memory state sync on every frame for instantaneous 1:1 fader responsiveness
+        self.initial_load_status()
+        self.last_poll_time = now
 
         # Update live VU peak
         if self.get_live_meter() and not self.last_mute:
