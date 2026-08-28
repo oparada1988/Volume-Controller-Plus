@@ -24,6 +24,9 @@ class ChannelMaster(WaveControllerBaseAction):
             return
         settings = self.get_settings() or {}
         ch_id = self.get_configured_channel_id()
+        if not settings.get("channel_id") and ch_id:
+            settings["channel_id"] = ch_id
+            self.set_settings(settings)
         vol, muted = self.client.get_channel_volume(ch_id)
         self.current_volume = int(vol) if vol is not None else 80
         self.last_mute = bool(muted) if muted is not None else False

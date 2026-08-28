@@ -140,8 +140,6 @@ class WaveControllerClient:
         sock = None
         buf = ""
         last_channels_poll = 0.0
-        last_devices_poll = 0.0
-        last_hardware_poll = 0.0
 
         while self._running:
             if sock is None:
@@ -258,10 +256,16 @@ class WaveControllerClient:
                 pass
 
     def get_channels_and_mixes(self, force: bool = False) -> dict:
-        """Instantly returns active channels, mixes, and states from memory."""
+        """Instantly returns active channels, mixes, and states from memory, or queries socket if force=True."""
         with self._cache_lock:
-            if self._cached_channels_data and self._cached_channels_data.get("channels"):
+            if not force and self._cached_channels_data and self._cached_channels_data.get("channels"):
                 return self._cached_channels_data
+        if force:
+            res = self.send_command({"command": "get_channels"}, timeout=0.20)
+            if res and res.get("status") == "ok":
+                with self._cache_lock:
+                    self._cached_channels_data = res
+                return res
         fallback = self._load_config_fallback()
         return fallback or {}
 

@@ -14,7 +14,6 @@ from gi.repository import Gtk
 from .actions.ChannelMaster.ChannelMaster import ChannelMaster
 from .actions.SubMix.SubMix import SubMix
 from .actions.MixMaster.MixMaster import MixMaster
-from .actions.VolumeControl.VolumeControl import VolumeControl
 
 class PluginTemplate(PluginBase):
     def __init__(self):

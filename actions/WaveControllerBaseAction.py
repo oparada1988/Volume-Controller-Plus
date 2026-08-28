@@ -215,13 +215,8 @@ class WaveControllerBaseAction(ActionBase):
         if self.get_live_meter() and not self.last_mute:
             raw_peak = self.get_current_peak_val()
             
-            # Smooth responsive attack + graceful exponential fade-to-zero
-            if raw_peak > self._current_peak:
-                self._current_peak = min(1.0, self._current_peak + (raw_peak - self._current_peak) * 0.75)
-            else:
-                self._current_peak = max(0.0, self._current_peak * 0.92 - 0.002)
-                if self._current_peak < 0.002:
-                    self._current_peak = 0.0
+            # Direct tracking of authoritative DSP peaks for zero-jitter 30 FPS rendering
+            self._current_peak = min(1.0, max(0.0, raw_peak))
 
             # Peak hold marker decay
             if self._current_peak >= self._peak_hold_val:
