@@ -750,8 +750,9 @@ class WaveControllerBaseAction(ActionBase):
             else:
                 is_live_enabled = settings.get("live_meter", True)
                 if is_live_enabled:
-                    if peak > 0.02:
-                        scaled_peak = min(1.0, max(0.0, peak))
+                    vol_pct = max(0.0, min(1.0, volume / 100.0))
+                    if peak > 0.02 and vol_pct > 0.0:
+                        scaled_peak = min(vol_pct, vol_pct * peak)
                         peak_angle = int(210 + 120 * scaled_peak)
                         if peak_angle > 210:
                             rad_e = math.radians(min(330, peak_angle))
@@ -773,9 +774,9 @@ class WaveControllerBaseAction(ActionBase):
                                 grad_img_sub = self._get_gauge_gradient_image_sub(width, height, bbox)
                                 img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
 
-                    # Peak Hold Marker (Pre-fader true peak)
-                    if self._peak_hold_val > 0.04:
-                        scaled_hold = min(1.0, max(0.0, self._peak_hold_val))
+                    # Peak Hold Marker (bounded by volume)
+                    if self._peak_hold_val > 0.04 and vol_pct > 0.0:
+                        scaled_hold = min(vol_pct, max(0.0, self._peak_hold_val * vol_pct))
                         hold_angle = int(210 + 120 * scaled_hold)
                         if hold_angle > 210:
                             draw.arc(bbox, start=max(210, hold_angle - 1), end=min(330, hold_angle + 1), fill=(255, 75, 75, 255), width=arc_w)
