@@ -38,6 +38,10 @@ class WaveControllerClient:
         self._cmd_lock = threading.Lock()
         self._running = True
 
+        self._config_mtime = 0.0
+        self._use_system_theme = False
+        self._last_theme_check_time = 0.0
+
         # Preload initial fallback data
         self._load_config_fallback()
 
@@ -111,15 +115,36 @@ class WaveControllerClient:
                         "master_states": data.get("channel_master_states", {}),
                         "mix_states": data.get("mix_states", {}),
                         "device_aliases": data.get("device_aliases", {}),
-                        "assigned_apps": data.get("assigned_apps", {})
+                        "assigned_apps": data.get("assigned_apps", {}),
+                        "use_system_theme": data.get("use_system_theme", False)
                     }
+                    self._use_system_theme = bool(data.get("use_system_theme", False))
                     with self._cache_lock:
                         if not self._cached_channels_data:
                             self._cached_channels_data = fallback_data
+                        else:
+                            self._cached_channels_data["use_system_theme"] = self._use_system_theme
                     return fallback_data
             except Exception:
                 pass
         return {}
+
+    def get_use_system_theme(self) -> bool:
+        """Returns whether WaveController is configured to use the system GTK/Libadwaita theme."""
+        now = time.time()
+        if now - getattr(self, "_last_theme_check_time", 0.0) > 1.0:
+            self._last_theme_check_time = now
+            if os.path.exists(self.config_path):
+                try:
+                    mtime = os.path.getmtime(self.config_path)
+                    if mtime != getattr(self, "_config_mtime", 0.0):
+                        self._config_mtime = mtime
+                        with open(self.config_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            self._use_system_theme = bool(data.get("use_system_theme", False))
+                except Exception:
+                    pass
+        return getattr(self, "_use_system_theme", False)
 
     def _run_async_worker(self):
         """Sequential single-worker queue processing IPC commands strictly in chronological order."""

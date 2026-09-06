@@ -160,12 +160,8 @@ class WaveControllerBaseAction(ActionBase):
         return float(val), float(val)
 
     def get_step_size(self) -> int:
-        settings = self.get_settings() or {}
-        step_str = settings.get("step_size", "5%")
-        try:
-            return int(step_str.replace("%", "").strip())
-        except (ValueError, AttributeError):
-            return 5
+        # Standard volume adjustment step controlled by WaveController (2%)
+        return 2
 
     def get_live_meter(self) -> bool:
         settings = self.get_settings() or {}
@@ -176,12 +172,21 @@ class WaveControllerBaseAction(ActionBase):
         return settings.get("ui_style", "wave").lower()
 
     def get_appearance(self) -> str:
-        settings = self.get_settings() or {}
-        return settings.get("appearance", "midnight").lower()
+        """
+        Determines theme mode by following WaveController's centralized configuration:
+        - If 'Use System Theme' is enabled in WaveController -> 'system'
+        - Otherwise (default) -> 'midnight' (WaveController Midnight Dark)
+        """
+        try:
+            if self.client.get_use_system_theme():
+                return "system"
+        except Exception:
+            pass
+        return "midnight"
 
     def get_accent_color(self) -> str:
-        settings = self.get_settings() or {}
-        return settings.get("accent_color", "system").lower()
+        rgb = self.resolve_accent_rgb()
+        return f"{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     @staticmethod
     def get_system_theme_preference() -> str:
@@ -221,11 +226,26 @@ class WaveControllerBaseAction(ActionBase):
     }
 
     def resolve_accent_rgb(self) -> tuple:
-        choice = self.get_accent_color()
-        if choice == "system":
-            sys_accent = self.get_system_accent_name()
-            return self.ACCENT_PALETTE.get(sys_accent, (145, 70, 255))
-        return self.ACCENT_PALETTE.get(choice, (145, 70, 255))
+        """
+        Dynamically resolves the active accent color:
+        1. If controlling a mix and the mix defines a color in WaveController, inherits the mix's accent color.
+        2. Otherwise, automatically follows the system GNOME / Libadwaita accent color.
+        """
+        if hasattr(self, "get_configured_mix_id"):
+            try:
+                mix_id = self.get_configured_mix_id()
+                data = self.client.get_channels_and_mixes()
+                mixes = data.get("mixes", [])
+                for m in mixes:
+                    if m.get("id") == mix_id or str(m.get("id", "")).lower() == str(mix_id).lower():
+                        c_hex = m.get("color")
+                        if c_hex and isinstance(c_hex, str) and c_hex.startswith("#") and len(c_hex) == 7:
+                            return (int(c_hex[1:3], 16), int(c_hex[3:5], 16), int(c_hex[5:7], 16))
+            except Exception:
+                pass
+
+        sys_accent = self.get_system_accent_name()
+        return self.ACCENT_PALETTE.get(sys_accent, (145, 70, 255))
 
     def get_theme_palette(self) -> dict:
         appearance = self.get_appearance()
@@ -563,65 +583,58 @@ class WaveControllerBaseAction(ActionBase):
         return settings.get("badge_style", "icon_text")
 
     def resolve_badge_image(self, title: str, subtitle: str, target_size: int = 22):
-        """Resolves a category or mix badge image (136x136 PNG) based on target title and subtitle."""
-        settings = self.get_settings() or {}
-        custom_badge = settings.get("custom_badge", "auto")
+        """
+        Resolves one of the 3 simplified badge types:
+        1. badge-channel.png: for channel actions (audio channels, apps, mic channel).
+        2. badge-source.png: for source/input mixes (e.g. Chat Mix, microphone/input capture mix).
+        3. badge-output.png: for sink/output mixes (e.g. Personal Mix, headphones/speaker output mix).
+        """
         badge_name = None
 
-        if custom_badge and custom_badge != "auto":
-            badge_name = custom_badge
-            if not badge_name.endswith(".png"):
-                badge_name += ".png"
-        else:
-            sub_low = (subtitle or "").lower()
-            title_low = (title or "").lower()
-
-            # 1. Match subtitle (mix / role)
-            if "personal" in sub_low or "user" in sub_low:
-                badge_name = "badge-personal.png"
-            elif "stream" in sub_low or "record" in sub_low or "obs" in sub_low:
-                badge_name = "badge-stream.png"
-            elif "chat" in sub_low or "voice" in sub_low:
-                badge_name = "badge-chat.png"
-            elif "headphone" in sub_low or "monitor" in sub_low or "ear" in sub_low:
-                badge_name = "badge-headphone.png"
-            elif "game" in sub_low or "gaming" in sub_low:
-                badge_name = "badge-game.png"
-            elif "music" in sub_low or "song" in sub_low:
-                badge_name = "badge-music.png"
-            elif "browser" in sub_low or "web" in sub_low:
-                badge_name = "badge-browser.png"
-            elif "mic" in sub_low or "capture" in sub_low:
-                badge_name = "badge-mic.png"
-            elif "system" in sub_low or "alert" in sub_low:
-                badge_name = "badge-system.png"
-            elif "master" in sub_low:
-                badge_name = "badge-master.png"
-            else:
-                # 2. Match channel / app context
-                if any(k in title_low for k in ("spotify", "music", "amberol", "rhythmbox", "tidal", "vlc", "clementine")):
-                    badge_name = "badge-music.png"
-                elif any(k in title_low for k in ("discord", "teams", "slack", "zoom", "skype", "telegram")):
-                    badge_name = "badge-chat.png"
-                elif any(k in title_low for k in ("steam", "heroic", "lutris", "wine", "game", "proton")):
-                    badge_name = "badge-game.png"
-                elif any(k in title_low for k in ("firefox", "chrome", "chromium", "brave", "edge", "browser")):
-                    badge_name = "badge-browser.png"
-                elif any(k in title_low for k in ("mic", "microphone", "wave xlr", "input", "fifine")):
-                    badge_name = "badge-mic.png"
-                elif any(k in title_low for k in ("system", "alert", "bell", "notification")):
-                    badge_name = "badge-system.png"
-                elif "personal" in title_low:
-                    badge_name = "badge-personal.png"
-                elif "stream" in title_low:
-                    badge_name = "badge-stream.png"
-                elif "chat" in title_low:
-                    badge_name = "badge-chat.png"
-                else:
-                    badge_name = "badge-master.png"
+        # Check if custom badge was explicitly specified
+        settings = self.get_settings() or {}
+        custom_badge = str(settings.get("custom_badge", "auto") or "auto").lower()
+        if custom_badge not in ("auto", "none", ""):
+            if "channel" in custom_badge:
+                badge_name = "badge-channel.png"
+            elif "output" in custom_badge or "sink" in custom_badge:
+                badge_name = "badge-output.png"
+            elif "source" in custom_badge or "input" in custom_badge or "mic" in custom_badge:
+                badge_name = "badge-source.png"
 
         if not badge_name:
-            return None
+            # Check if this action is controlling or targeting a mix (MixMaster or SubMix)
+            if hasattr(self, "get_configured_mix_id"):
+                try:
+                    mix_id = self.get_configured_mix_id()
+                    data = self.client.get_channels_and_mixes()
+                    mixes = data.get("mixes", [])
+                    m = self._match_mix(mix_id, mixes) if hasattr(self, "_match_mix") else None
+                    if not m:
+                        for item in mixes:
+                            if item.get("id") == mix_id or str(item.get("id", "")).lower() == str(mix_id).lower():
+                                m = item
+                                break
+                    m_type = str(m.get("type", "") if m else "").lower()
+                    if m_type in ("sink", "output"):
+                        badge_name = "badge-output.png"
+                    elif m_type in ("source", "input", "mic"):
+                        badge_name = "badge-source.png"
+                    else:
+                        # Fallback by mix ID / title keywords
+                        mid_low = str(mix_id or "").lower()
+                        if any(k in mid_low for k in ("source", "chat", "record", "mic", "input")):
+                            badge_name = "badge-source.png"
+                        else:
+                            badge_name = "badge-output.png"
+                except Exception:
+                    badge_name = "badge-output.png"
+            else:
+                # ChannelMaster or standalone channel fader
+                badge_name = "badge-channel.png"
+
+        if not badge_name:
+            badge_name = "badge-channel.png"
 
         if not hasattr(self, "_cached_badge_images"):
             self._cached_badge_images = {}
@@ -1461,86 +1474,7 @@ class WaveControllerBaseAction(ActionBase):
         self.ui_style_selector.connect("notify::selected", on_style_changed)
         rows.append(self.ui_style_selector)
 
-        # 2. Appearance / Theme (Midnight / Follow System)
-        self.appearance_model = Gtk.StringList()
-        self.appearance_model.append("Midnight Dark (Default)")
-        self.appearance_model.append("Follow System Theme")
-        self.appearance_selector = Adw.ComboRow(
-            model=self.appearance_model,
-            title="Appearance",
-            subtitle="Theme palette for card background and surfaces"
-        )
-        current_app = self.get_appearance()
-        self.appearance_selector.set_selected(0 if current_app == "midnight" else 1)
-        def on_appearance_changed(combo, *args):
-            s = self.get_settings() or {}
-            s["appearance"] = "midnight" if combo.get_selected() == 0 else "system"
-            self.set_settings(s)
-            self._invalidate_all_caches()
-            self.update_ui_rendering(force=True)
-        self.appearance_selector.connect("notify::selected", on_appearance_changed)
-        rows.append(self.appearance_selector)
-
-        # 3. Accent Color
-        accents = [
-            ("system", "Follow System (Auto)"),
-            ("blue", "Blue"),
-            ("purple", "Purple"),
-            ("teal", "Teal"),
-            ("green", "Green"),
-            ("yellow", "Yellow"),
-            ("orange", "Orange"),
-            ("red", "Red"),
-            ("pink", "Pink"),
-            ("slate", "Slate"),
-        ]
-        self.accent_model = Gtk.StringList()
-        for _, name in accents:
-            self.accent_model.append(name)
-        self.accent_selector = Adw.ComboRow(
-            model=self.accent_model,
-            title="Accent Color",
-            subtitle="Color for fader knob, badges, and active accents"
-        )
-        curr_accent = self.get_accent_color()
-        acc_idx = 0
-        for i, (k, _) in enumerate(accents):
-            if k == curr_accent:
-                acc_idx = i
-                break
-        self.accent_selector.set_selected(acc_idx)
-        def on_accent_changed(combo, *args):
-            s = self.get_settings() or {}
-            idx = combo.get_selected()
-            if 0 <= idx < len(accents):
-                s["accent_color"] = accents[idx][0]
-                self.set_settings(s)
-                self._invalidate_all_caches()
-                self.update_ui_rendering(force=True)
-        self.accent_selector.connect("notify::selected", on_accent_changed)
-        rows.append(self.accent_selector)
-
-        # 4. Volume Step Size
-        step_sizes = ["1%", "2%", "5%", "10%"]
-        self.step_model = Gtk.StringList()
-        for size in step_sizes:
-            self.step_model.append(size)
-        self.step_selector = Adw.ComboRow(
-            model=self.step_model,
-            title="Volume Step Size"
-        )
-        curr_step = f"{self.get_step_size()}%"
-        self.step_selector.set_selected(step_sizes.index(curr_step) if curr_step in step_sizes else 2)
-        def on_step_changed(combo, *args):
-            s = self.get_settings() or {}
-            idx = combo.get_selected()
-            if 0 <= idx < len(step_sizes):
-                s["step_size"] = step_sizes[idx]
-                self.set_settings(s)
-        self.step_selector.connect("notify::selected", on_step_changed)
-        rows.append(self.step_selector)
-
-        # 5. Volume Display Format
+        # 2. Volume Display Format
         self.vol_format_model = Gtk.StringList()
         self.vol_format_model.append("Percentage (%)")
         self.vol_format_model.append("Decibels (dB)")
@@ -1559,7 +1493,7 @@ class WaveControllerBaseAction(ActionBase):
         self.vol_format_selector.connect("notify::selected", on_format_changed)
         rows.append(self.vol_format_selector)
 
-        # 6. Live Peak Meter Toggle
+        # 3. Live Peak Meter Toggle
         self.live_meter_row = Adw.SwitchRow(
             title="Live Peak Meter"
         )
@@ -1573,7 +1507,7 @@ class WaveControllerBaseAction(ActionBase):
         self.live_meter_row.connect("notify::active", on_meter_toggled)
         rows.append(self.live_meter_row)
 
-        # 7. Badge Display Style (Icon & Text, Badge Only, Text Only)
+        # 4. Badge Display Style (Icon & Text, Badge Only, Text Only)
         self.badge_style_model = Gtk.StringList()
         self.badge_style_model.append("Icon & Text (Pill)")
         self.badge_style_model.append("Badge Only (Icon)")
@@ -1634,8 +1568,17 @@ class WaveControllerBaseAction(ActionBase):
         
         badge_style = self.get_badge_style()
         badge_style_changed = (badge_style != getattr(self, "last_drawn_badge_style", None))
+
+        appearance = self.get_appearance()
+        appearance_changed = (appearance != getattr(self, "last_drawn_appearance", None))
+
+        accent_color = self.get_accent_color()
+        accent_changed = (accent_color != getattr(self, "last_drawn_accent", None))
+
+        if appearance_changed or accent_changed:
+            self._invalidate_all_caches()
         
-        if force or vol_changed or mute_changed or adjust_changed or title_changed or subtitle_changed or icon_changed or telemetry_changed or style_changed or badge_style_changed or (peak_changed and not is_adjusting):
+        if force or vol_changed or mute_changed or adjust_changed or title_changed or subtitle_changed or icon_changed or telemetry_changed or style_changed or badge_style_changed or appearance_changed or accent_changed or (peak_changed and not is_adjusting):
             with self._render_lock:
                 self._last_render_time = now
                 self.last_drawn_volume = self.current_volume
@@ -1651,6 +1594,8 @@ class WaveControllerBaseAction(ActionBase):
                 self.last_drawn_telemetry = telemetry_info
                 self.last_drawn_ui_style = ui_style
                 self.last_drawn_badge_style = badge_style
+                self.last_drawn_appearance = appearance
+                self.last_drawn_accent = accent_color
                 
                 img = self.generate_volume_image(self.current_volume, self.last_mute, peak=peak, peak_l=peak_l, peak_r=peak_r)
                 try:

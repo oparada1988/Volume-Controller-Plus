@@ -69,16 +69,20 @@ class MixMaster(WaveControllerBaseAction):
         m = self._match_mix(m_id, mixes)
         
         mix_name = m.get("name", m_id.capitalize())
-        target_dev = m.get("target_device", "none")
+        mix_type = m.get("type", "sink").lower()
 
-        # Resolve target device display name
-        dev_display = "Output"
-        if target_dev and target_dev != "none":
-            devices = self.client.get_output_devices()
-            for d in devices:
-                if d.get("name") == target_dev:
-                    dev_display = d.get("display_name", d.get("name", "Output"))
-                    break
+        if mix_type not in ("sink", "output"):
+            dev_display = m.get("subtitle", "Virtual Source")
+        else:
+            target_dev = m.get("target_device", "none")
+            # Resolve target device display name
+            dev_display = "Output"
+            if target_dev and target_dev != "none":
+                devices = self.client.get_output_devices()
+                for d in devices:
+                    if d.get("name") == target_dev:
+                        dev_display = d.get("display_name", d.get("name", "Output"))
+                        break
 
         return mix_name, dev_display
 
@@ -107,6 +111,11 @@ class MixMaster(WaveControllerBaseAction):
 
     def handle_cycle_device(self):
         m_id = self.get_configured_mix_id()
+        data = self.client.get_channels_and_mixes()
+        mixes = data.get("mixes", [])
+        m = self._match_mix(m_id, mixes)
+        if m.get("type", "sink").lower() not in ("sink", "output"):
+            return
         new_dev = self.client.cycle_mix_target_device(m_id)
         settings = self.get_settings() or {}
         settings["target_device"] = new_dev
@@ -114,16 +123,30 @@ class MixMaster(WaveControllerBaseAction):
         self._cached_midground = None
         self.update_ui_rendering(force=True)
 
+    def _raw_event_callback(self, event: InputEvent, data: dict = None):
+        ev_str = str(event)
+        if event == Input.Dial.Events.TURN_CW or ev_str == "Dial Turn CW":
+            self.handle_volume_change(self.get_step_size())
+        elif event == Input.Dial.Events.TURN_CCW or ev_str == "Dial Turn CCW":
+            self.handle_volume_change(-self.get_step_size())
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS) or ev_str in ("Dial Down", "Dial Touchscreen Short Press"):
+            self.handle_mute_toggle()
+        elif event == Input.Dial.Events.LONG_TOUCH_PRESS or ev_str == "Dial Touchscreen Long Press":
+            self.handle_cycle_device()
+        else:
+            super()._raw_event_callback(event, data)
+
     def event_callback(self, event: InputEvent, data: dict = None):
-        if event == Input.Dial.Events.TURN_CW:
+        ev_str = str(event)
+        if event == Input.Dial.Events.TURN_CW or ev_str == "Dial Turn CW":
             step_val = self.get_step_size()
             self.handle_volume_change(step_val)
-        elif event == Input.Dial.Events.TURN_CCW:
+        elif event == Input.Dial.Events.TURN_CCW or ev_str == "Dial Turn CCW":
             step_val = self.get_step_size()
             self.handle_volume_change(-step_val)
-        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS):
+        elif event in (Input.Dial.Events.DOWN, Input.Dial.Events.SHORT_TOUCH_PRESS) or ev_str in ("Dial Down", "Dial Touchscreen Short Press"):
             self.handle_mute_toggle()
-        elif event == Input.Dial.Events.LONG_TOUCH_PRESS:
+        elif event == Input.Dial.Events.LONG_TOUCH_PRESS or ev_str == "Dial Touchscreen Long Press":
             self.handle_cycle_device()
         elif hasattr(Input, "Touchscreen") and hasattr(Input.Touchscreen, "Events") and event in (
             getattr(Input.Touchscreen.Events, "SHORT_PRESS", None),
@@ -214,9 +237,23 @@ class MixMaster(WaveControllerBaseAction):
                     dev_idx = idx
                     break
             self.device_selector.set_selected(dev_idx)
+            self._sync_device_visibility(current_mix, mixes)
             self.set_settings(settings)
         finally:
             self._updating_dropdowns = False
+
+    def _sync_device_visibility(self, mix_id: str, mixes: list):
+        """Physical Output Device row should only appear when the mix selected is a sink/output, not a source/input/microphone."""
+        if not hasattr(self, "device_selector"):
+            return
+        m = self._match_mix(mix_id, mixes) if mixes else {}
+        m_type = str(m.get("type", "") if m else "").lower()
+        if m_type:
+            is_sink = (m_type in ("sink", "output"))
+        else:
+            mid_low = str(mix_id or "").lower()
+            is_sink = not any(k in mid_low for k in ("source", "chat", "mic", "input"))
+        self.device_selector.set_visible(is_sink)
 
     def _on_mix_selected(self, combo, *args):
         if self._updating_dropdowns:
@@ -231,10 +268,12 @@ class MixMaster(WaveControllerBaseAction):
             self._cached_midground = None
             self.initial_load_status()
             
+            data = self.client.get_channels_and_mixes()
+            mixes = data.get("mixes", [])
+            self._sync_device_visibility(m_id, mixes)
+
             # Safely sync target device selection without rebuilding models
             if hasattr(self, "device_selector") and hasattr(self, "devices_list"):
-                data = self.client.get_channels_and_mixes()
-                mixes = data.get("mixes", [])
                 current_target = "none"
                 for m in mixes:
                     if m["id"] == m_id:
