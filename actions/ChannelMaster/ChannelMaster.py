@@ -167,7 +167,7 @@ class ChannelMaster(WaveControllerBaseAction):
         }
 
     def handle_touch_tap(self, data: dict) -> bool:
-        """Handles touchscreen taps. Tapping the 48V badge (Slot 2) toggles phantom power."""
+        """Handles touchscreen taps. Tapping the 48V badge toggles phantom power."""
         telemetry = self.get_hardware_telemetry_info()
         if not telemetry or not isinstance(data, dict):
             return False
@@ -180,12 +180,20 @@ class ChannelMaster(WaveControllerBaseAction):
         # Stream Deck + dial screen slice width is 200px (4 dials x 200 = 800)
         rel_x = x % 200
         rel_y = y
+        style = self.get_ui_style()
 
-        # Slot 2 (48V badge) touch bounding box: rel_x in [130, 200], rel_y in [40, 75]
-        if rel_x >= 130 and 40 <= rel_y <= 75:
-            self.client.toggle_phantom_power()
-            self.update_ui_rendering(force=True)
-            return True
+        if style == "wave":
+            # Wave style: 48V badge is at top right: rel_x in [130, 195], rel_y in [10, 40]
+            if rel_x >= 130 and 10 <= rel_y <= 40:
+                self.client.toggle_phantom_power()
+                self.update_ui_rendering(force=True)
+                return True
+        else:
+            # Slot 2 (48V badge) touch bounding box in DX style: rel_x in [130, 200], rel_y in [40, 75]
+            if rel_x >= 130 and 40 <= rel_y <= 75:
+                self.client.toggle_phantom_power()
+                self.update_ui_rendering(force=True)
+                return True
 
         return False
 
@@ -199,6 +207,17 @@ class ChannelMaster(WaveControllerBaseAction):
                     val = v
                     break
         return self._extract_peak_value(val)
+
+    def get_current_peaks_stereo(self) -> tuple:
+        ch_id = self.get_configured_channel_id()
+        peaks = self.client.get_peaks()
+        val = peaks.get(ch_id)
+        if val is None:
+            for k, v in peaks.items():
+                if k.lower() == ch_id.lower() or k.lower() in ch_id.lower() or ch_id.lower() in k.lower():
+                    val = v
+                    break
+        return self._extract_stereo_peak_values(val)
 
     def update_channel_dropdown(self):
         if not hasattr(self, "channel_selector"):
@@ -256,9 +275,6 @@ class ChannelMaster(WaveControllerBaseAction):
             self.update_ui_rendering(force=True)
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
-        settings = self.get_settings() or {}
-        vol_format = settings.get("volume_format", "percent")
-
         # 1. Channel Selector (Queries active WaveController channels)
         self.channel_model = Gtk.StringList()
         self.channel_selector = Adw.ComboRow(
@@ -268,58 +284,4 @@ class ChannelMaster(WaveControllerBaseAction):
         self.channel_selector.connect("notify::selected", self._on_channel_selected)
         self.update_channel_dropdown()
 
-        # 2. Volume Step Size
-        self.step_model = Gtk.StringList()
-        step_sizes = ["1%", "2%", "5%", "10%"]
-        for size in step_sizes:
-            self.step_model.append(size)
-        self.step_selector = Adw.ComboRow(
-            model=self.step_model,
-            title="Volume Step Size"
-        )
-        curr_step = f"{self.get_step_size()}%"
-        self.step_selector.set_selected(step_sizes.index(curr_step) if curr_step in step_sizes else 2)
-        def on_step_changed(combo, *args):
-            s = self.get_settings() or {}
-            idx = combo.get_selected()
-            if 0 <= idx < len(step_sizes):
-                s["step_size"] = step_sizes[idx]
-                self.set_settings(s)
-        self.step_selector.connect("notify::selected", on_step_changed)
-
-        # 3. Volume Format
-        self.vol_format_model = Gtk.StringList()
-        self.vol_format_model.append("Percentage (%)")
-        self.vol_format_model.append("Decibels (dB)")
-        self.vol_format_selector = Adw.ComboRow(
-            model=self.vol_format_model,
-            title="Volume Display Format"
-        )
-        self.vol_format_selector.set_selected(0 if vol_format == "percent" else 1)
-        def on_format_changed(combo, *args):
-            s = self.get_settings() or {}
-            s["volume_format"] = "percent" if combo.get_selected() == 0 else "db"
-            self.set_settings(s)
-            self._cached_midground = None
-            self.update_ui_rendering(force=True)
-        self.vol_format_selector.connect("notify::selected", on_format_changed)
-
-        # 4. Live Peak Meter Toggle
-        self.live_meter_row = Adw.SwitchRow(
-            title="Live Peak Meter"
-        )
-        self.live_meter_row.set_active(settings.get("live_meter", True))
-        def on_meter_toggled(switch, *args):
-            s = self.get_settings() or {}
-            s["live_meter"] = switch.get_active()
-            self.set_settings(s)
-            self._cached_midground = None
-            self.update_ui_rendering(force=True)
-        self.live_meter_row.connect("notify::active", on_meter_toggled)
-
-        return [
-            self.channel_selector,
-            self.step_selector,
-            self.vol_format_selector,
-            self.live_meter_row
-        ]
+        return [self.channel_selector] + self.get_base_config_rows()

@@ -1784,9 +1784,10 @@ class VolumeControl(ActionBase):
             else:
                 is_live_enabled = settings.get("live_meter", True)
                 if is_live_enabled:
+                    vol_pct = max(0.0, min(1.0, volume / 100.0))
                     # Bouncing audio peak arc
-                    if peak > 0.04:
-                        scaled_peak = peak * (volume / 100.0)
+                    if peak > 0.04 and vol_pct > 0.0:
+                        scaled_peak = min(vol_pct, peak)
                         peak_angle = int(210 + 120 * min(1.0, scaled_peak))
                         if peak_angle > 210:
                             rad_e = math.radians(min(330, peak_angle))
@@ -1811,8 +1812,8 @@ class VolumeControl(ActionBase):
                                 img.paste(grad_img_sub, (self._gx1, self._gy1), self._peak_mask_sub)
 
                     # Peak Hold marker (Floating bright indicator for studio console aesthetics)
-                    if self._peak_hold_val > 0.04:
-                        scaled_hold = self._peak_hold_val * (volume / 100.0)
+                    if self._peak_hold_val > 0.04 and vol_pct > 0.0:
+                        scaled_hold = min(vol_pct, max(0.0, self._peak_hold_val))
                         hold_angle = int(210 + 120 * min(1.0, scaled_hold))
                         if hold_angle > 210:
                             draw.arc(bbox, start=max(210, hold_angle - 1), end=min(330, hold_angle + 1), fill=(255, 75, 75, 255), width=arc_w)

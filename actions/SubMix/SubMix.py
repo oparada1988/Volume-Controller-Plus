@@ -178,6 +178,23 @@ class SubMix(WaveControllerBaseAction):
                     break
         return self._extract_peak_value(val)
 
+    def get_current_peaks_stereo(self) -> tuple:
+        ch_id = self.get_configured_channel_id()
+        m_id = self.get_configured_mix_id()
+        # Verify if channel is actually enabled in this mix
+        data = self.client.get_channels_and_mixes()
+        states = data.get("states", {})
+        if not states.get(ch_id, {}).get(m_id, {}).get("enabled", True):
+            return 0.0, 0.0
+        peaks = self.client.get_peaks()
+        val = peaks.get(ch_id)
+        if val is None:
+            for k, v in peaks.items():
+                if k.lower() == ch_id.lower() or k.lower() in ch_id.lower() or ch_id.lower() in k.lower():
+                    val = v
+                    break
+        return self._extract_stereo_peak_values(val)
+
     def _rebuild_channel_dropdown(self, mix_id: str, channels: list = None, states: dict = None, settings: dict = None):
         if not hasattr(self, "channel_selector"):
             return
@@ -309,9 +326,6 @@ class SubMix(WaveControllerBaseAction):
             self.update_ui_rendering(force=True)
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
-        settings = self.get_settings() or {}
-        vol_format = settings.get("volume_format", "percent")
-
         # 1. Mix Selector (Personal Mix, Stream Mix, etc.)
         self.mix_model = Gtk.StringList()
         self.mix_selector = Adw.ComboRow(
@@ -329,59 +343,4 @@ class SubMix(WaveControllerBaseAction):
         self.channel_selector.connect("notify::selected", self._on_channel_selected)
         self.update_dropdowns()
 
-        # 3. Volume Step Size
-        self.step_model = Gtk.StringList()
-        step_sizes = ["1%", "2%", "5%", "10%"]
-        for size in step_sizes:
-            self.step_model.append(size)
-        self.step_selector = Adw.ComboRow(
-            model=self.step_model,
-            title="Volume Step Size"
-        )
-        curr_step = f"{self.get_step_size()}%"
-        self.step_selector.set_selected(step_sizes.index(curr_step) if curr_step in step_sizes else 2)
-        def on_step_changed(combo, *args):
-            s = self.get_settings() or {}
-            idx = combo.get_selected()
-            if 0 <= idx < len(step_sizes):
-                s["step_size"] = step_sizes[idx]
-                self.set_settings(s)
-        self.step_selector.connect("notify::selected", on_step_changed)
-
-        # 4. Volume Format
-        self.vol_format_model = Gtk.StringList()
-        self.vol_format_model.append("Percentage (%)")
-        self.vol_format_model.append("Decibels (dB)")
-        self.vol_format_selector = Adw.ComboRow(
-            model=self.vol_format_model,
-            title="Volume Display Format"
-        )
-        self.vol_format_selector.set_selected(0 if vol_format == "percent" else 1)
-        def on_format_changed(combo, *args):
-            s = self.get_settings() or {}
-            s["volume_format"] = "percent" if combo.get_selected() == 0 else "db"
-            self.set_settings(s)
-            self._cached_midground = None
-            self.update_ui_rendering(force=True)
-        self.vol_format_selector.connect("notify::selected", on_format_changed)
-
-        # 5. Live Peak Meter Toggle
-        self.live_meter_row = Adw.SwitchRow(
-            title="Live Peak Meter"
-        )
-        self.live_meter_row.set_active(settings.get("live_meter", True))
-        def on_meter_toggled(switch, *args):
-            s = self.get_settings() or {}
-            s["live_meter"] = switch.get_active()
-            self.set_settings(s)
-            self._cached_midground = None
-            self.update_ui_rendering(force=True)
-        self.live_meter_row.connect("notify::active", on_meter_toggled)
-
-        return [
-            self.mix_selector,
-            self.channel_selector,
-            self.step_selector,
-            self.vol_format_selector,
-            self.live_meter_row
-        ]
+        return [self.mix_selector, self.channel_selector] + self.get_base_config_rows()
