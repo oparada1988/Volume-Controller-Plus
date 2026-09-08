@@ -279,6 +279,9 @@ class WaveControllerBaseAction(ActionBase):
                 "track_guide": (45, 45, 58, 255),
                 "knob_body": (accent_rgb[0], accent_rgb[1], accent_rgb[2], 255),
                 "knob_border": (255, 255, 255, 220),
+                "dial_knob_well": (22, 22, 28, 255),
+                "dial_knob_body": (36, 37, 46, 255),
+                "dial_knob_bevel": (60, 62, 76, 255),
                 "badge_bg": blend_rgb(accent_rgb, card_col, 0.28),
                 "badge_border": blend_rgb(accent_rgb, card_col, 0.85),
                 "badge_text": (255, 255, 255, 255),
@@ -297,6 +300,9 @@ class WaveControllerBaseAction(ActionBase):
                 "track_guide": (195, 195, 205, 255),
                 "knob_body": (accent_rgb[0], accent_rgb[1], accent_rgb[2], 255),
                 "knob_border": (255, 255, 255, 230),
+                "dial_knob_well": (210, 210, 218, 255),
+                "dial_knob_body": (245, 245, 250, 255),
+                "dial_knob_bevel": (190, 192, 205, 255),
                 "badge_bg": blend_rgb(accent_rgb, card_col, 0.18),
                 "badge_border": blend_rgb(accent_rgb, card_col, 0.70),
                 "badge_text": (max(0, accent_rgb[0] - 40), max(0, accent_rgb[1] - 40), max(0, accent_rgb[2] - 40), 255),
@@ -315,6 +321,9 @@ class WaveControllerBaseAction(ActionBase):
                 "track_guide": (55, 55, 68, 255),
                 "knob_body": (accent_rgb[0], accent_rgb[1], accent_rgb[2], 255),
                 "knob_border": (255, 255, 255, 220),
+                "dial_knob_well": (26, 26, 32, 255),
+                "dial_knob_body": (48, 49, 58, 255),
+                "dial_knob_bevel": (72, 74, 88, 255),
                 "badge_bg": blend_rgb(accent_rgb, card_col, 0.28),
                 "badge_border": blend_rgb(accent_rgb, card_col, 0.85),
                 "badge_text": (255, 255, 255, 255),
@@ -723,7 +732,7 @@ class WaveControllerBaseAction(ActionBase):
             cap_r = arc_w / 2.0
             bbox_bg = [(cx_bg - r_arc_box, cy_bg - r_arc_box), (cx_bg + r_arc_box, cy_bg + r_arc_box)]
 
-            track_color = (35, 38, 48, 255) if palette["is_dark"] else (220, 222, 230, 255)
+            track_color = palette["track_recessed"]
             bg_draw.arc(bbox_bg, start=210, end=330, fill=track_color, width=arc_w)
             for cap_angle in (210, 330):
                 rad_cap = math.radians(cap_angle)
@@ -1021,9 +1030,9 @@ class WaveControllerBaseAction(ActionBase):
                 mid_draw.text((left_bound * RENDER_SCALE, (16 - 8) * RENDER_SCALE), title_text_to_draw, font=font_title_to_draw, fill=(220, 222, 230, 255))
 
             # Inner Knob Core
-            mid_draw.chord(bbox_outer, start=180, end=360, fill=(35, 35, 38, 255))
-            mid_draw.chord(bbox_inner, start=180, end=360, fill=(66, 66, 70, 255))
-            mid_draw.arc(bbox_inner, start=180, end=360, fill=(85, 85, 92, 255), width=1 * RENDER_SCALE)
+            mid_draw.chord(bbox_outer, start=180, end=360, fill=palette["dial_knob_well"])
+            mid_draw.chord(bbox_inner, start=180, end=360, fill=palette["dial_knob_body"])
+            mid_draw.arc(bbox_inner, start=180, end=360, fill=palette["dial_knob_bevel"], width=max(1, int(1.2 * RENDER_SCALE)))
 
             self._cached_midground = mid_img
             self._cached_midground_key = midground_key
@@ -1097,7 +1106,7 @@ class WaveControllerBaseAction(ActionBase):
         yp1 = cy + r_notch_in * math.sin(rad_pt)
         xp2 = cx + r_notch_out * math.cos(rad_pt)
         yp2 = cy + r_notch_out * math.sin(rad_pt)
-        pointer_color = (255, 255, 255, 255)
+        pointer_color = (239, 68, 68, 255) if is_muted else ((255, 255, 255, 255) if palette["is_dark"] else (30, 30, 35, 255))
         notch_w = int(2.5 * RENDER_SCALE)
         draw.line([(xp1, yp1), (xp2, yp2)], fill=pointer_color, width=notch_w)
 
