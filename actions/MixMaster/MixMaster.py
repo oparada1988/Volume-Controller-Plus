@@ -71,18 +71,10 @@ class MixMaster(WaveControllerBaseAction):
         mix_name = m.get("name", m_id.capitalize())
         mix_type = m.get("type", "sink").lower()
 
-        if mix_type not in ("sink", "output"):
-            dev_display = m.get("subtitle", "Virtual Source")
+        if mix_type in ("source", "input", "mic") or any(k in m_id.lower() for k in ("source", "chat", "record", "mic", "input")):
+            dev_display = "Input"
         else:
-            target_dev = m.get("target_device", "none")
-            # Resolve target device display name
             dev_display = "Output"
-            if target_dev and target_dev != "none":
-                devices = self.client.get_output_devices()
-                for d in devices:
-                    if d.get("name") == target_dev:
-                        dev_display = d.get("display_name", d.get("name", "Output"))
-                        break
 
         return mix_name, dev_display
 
