@@ -112,6 +112,12 @@ class SubMix(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
         c = self._match_channel(ch_id, channels)
+        ch_type = str(c.get("type", "")).lower()
+        if ch_type == "virtual":
+            if self.client.is_channel_system_default(ch_id):
+                return "video-display-symbolic"
+            return "audio-card-symbolic"
+
         if c.get("icon") and c.get("icon") not in ("network-offline-symbolic",):
             if ch_id.lower() in ("mic", "microphone") and c.get("icon") == "audio-input-microphone-symbolic":
                 hw_status = self.client.get_hardware_status()
@@ -215,6 +221,8 @@ class SubMix(WaveControllerBaseAction):
                     continue
                 name = c.get("name", c_id.capitalize())
                 clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                if str(c.get("type", "")).lower() == "virtual" and self.client.is_channel_system_default(c_id):
+                    clean_name = f"{clean_name} (System Default)"
                 self.channels_list.append((c_id, clean_name))
 
         if not self.channels_list:

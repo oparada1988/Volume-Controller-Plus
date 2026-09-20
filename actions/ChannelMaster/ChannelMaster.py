@@ -22,11 +22,7 @@ class ChannelMaster(WaveControllerBaseAction):
     def initial_load_status(self):
         if time.time() - getattr(self, "_last_volume_adjust_time", 0.0) < 0.40:
             return
-        settings = self.get_settings() or {}
         ch_id = self.get_configured_channel_id()
-        if not settings.get("channel_id") and ch_id:
-            settings["channel_id"] = ch_id
-            self.set_settings(settings)
         vol, muted = self.client.get_channel_volume(ch_id)
         self.current_volume = int(vol) if vol is not None else 80
         self.last_mute = bool(muted) if muted is not None else False
@@ -69,6 +65,11 @@ class ChannelMaster(WaveControllerBaseAction):
         name = c.get("name", ch_id.capitalize())
         if name.startswith("Elgato "):
             name = name[len("Elgato "):]
+        ch_type = str(c.get("type", "")).lower()
+        if ch_type == "virtual":
+            if self.client.is_channel_system_default(ch_id):
+                return name, "System Audio Device"
+            return name, "Virtual Audio Device"
         return name, "Master"
 
     def get_target_icon_path(self) -> str:
@@ -76,6 +77,13 @@ class ChannelMaster(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         channels = data.get("channels", [])
         c = self._match_channel(ch_id, channels)
+        ch_type = str(c.get("type", "")).lower()
+
+        if ch_type == "virtual":
+            if self.client.is_channel_system_default(ch_id):
+                return "video-display-symbolic"
+            return "audio-card-symbolic"
+
         if c.get("icon") and c.get("icon") not in ("network-offline-symbolic",):
             # If it's a mic channel with generic icon, verify if Wave XLR is attached
             if ch_id.lower() in ("mic", "microphone") and c.get("icon") == "audio-input-microphone-symbolic":
@@ -167,9 +175,28 @@ class ChannelMaster(WaveControllerBaseAction):
         }
 
     def handle_touch_tap(self, data: dict) -> bool:
-        """Handles touchscreen taps. Tapping the 48V badge toggles phantom power."""
+        """Handles touchscreen taps. Tapping the 48V badge toggles phantom power, or default output for virtual channels."""
         telemetry = self.get_hardware_telemetry_info()
         if not telemetry or not isinstance(data, dict):
+            # Check if this is a virtual channel: tapping the badge area toggles it as system default!
+            ch_id = self.get_configured_channel_id()
+            data_top = self.client.get_channels_and_mixes()
+            channels = data_top.get("channels", [])
+            c = self._match_channel(ch_id, channels)
+            if str(c.get("type", "")).lower() == "virtual" or c.get("expose_sink"):
+                x = data.get("x")
+                y = data.get("y")
+                if x is None or y is None:
+                    return False
+                rel_x = x % 200
+                rel_y = y
+                # Badge area at top-right
+                if rel_x >= 130 and 10 <= rel_y <= 55:
+                    is_def = self.client.is_channel_system_default(ch_id)
+                    self.client.set_channel_system_default(ch_id, not is_def)
+                    self._cached_midground = None
+                    self.update_ui_rendering(force=True)
+                    return True
             return False
 
         x = data.get("x")
@@ -233,6 +260,8 @@ class ChannelMaster(WaveControllerBaseAction):
                 for c in channels:
                     name = c.get("name", c["id"].capitalize())
                     clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
+                    if str(c.get("type", "")).lower() == "virtual" and self.client.is_channel_system_default(c.get("id", "")):
+                        clean_name = f"{clean_name} (System Default)"
                     self.channels_list.append((c["id"], clean_name))
             else:
                 self.channels_list = [("mic", "Microphone"), ("spotify", "Spotify")]

@@ -22,6 +22,16 @@ from .WaveControllerClient import WaveControllerClient
 
 RENDER_SCALE = 2
 ADJUSTING_TIMEOUT = 2.0  # 1:1 synchronization with WaveController's 2.0s hardware LED peek
+_gnome_settings_instance = None
+
+def _get_gnome_settings():
+    global _gnome_settings_instance
+    if _gnome_settings_instance is None:
+        try:
+            _gnome_settings_instance = Gio.Settings.new("org.gnome.desktop.interface")
+        except Exception:
+            _gnome_settings_instance = False
+    return _gnome_settings_instance if _gnome_settings_instance is not False else None
 
 class WaveControllerBaseAction(ActionBase):
     """
@@ -191,15 +201,16 @@ class WaveControllerBaseAction(ActionBase):
     @staticmethod
     def get_system_theme_preference() -> str:
         try:
-            settings = Gio.Settings.new("org.gnome.desktop.interface")
-            val = settings.get_string("color-scheme")
-            if "dark" in val.lower():
-                return "dark"
-            elif "light" in val.lower():
-                return "light"
-            gtk_theme = settings.get_string("gtk-theme").lower()
-            if "dark" in gtk_theme:
-                return "dark"
+            settings = _get_gnome_settings()
+            if settings:
+                val = settings.get_string("color-scheme")
+                if "dark" in val.lower():
+                    return "dark"
+                elif "light" in val.lower():
+                    return "light"
+                gtk_theme = settings.get_string("gtk-theme").lower()
+                if "dark" in gtk_theme:
+                    return "dark"
         except Exception:
             pass
         return "dark"
@@ -207,8 +218,9 @@ class WaveControllerBaseAction(ActionBase):
     @staticmethod
     def get_system_accent_name() -> str:
         try:
-            settings = Gio.Settings.new("org.gnome.desktop.interface")
-            return settings.get_string("accent-color").lower()
+            settings = _get_gnome_settings()
+            if settings:
+                return settings.get_string("accent-color").lower()
         except Exception:
             pass
         return "purple"
@@ -391,6 +403,8 @@ class WaveControllerBaseAction(ActionBase):
     def on_tick_update(self) -> bool:
         if not self.running:
             return False
+        if hasattr(self, "get_is_present") and not self.get_is_present():
+            return True
 
         now = time.time()
         # High-speed in-memory state sync on every frame for instantaneous 1:1 fader responsiveness
@@ -501,6 +515,9 @@ class WaveControllerBaseAction(ActionBase):
         """Resolves an icon name or file path to a crisp, high-contrast PIL Image using local assets or GTK IconTheme."""
         if not icon_identifier:
             return None
+
+        if icon_identifier in ("computer-symbolic", "computer"):
+            icon_identifier = "video-display-symbolic"
 
         resolved_img = None
 
@@ -646,7 +663,15 @@ class WaveControllerBaseAction(ActionBase):
                     badge_name = "badge-output.png"
             else:
                 # ChannelMaster or standalone channel fader
-                badge_name = "badge-channel.png"
+                if hasattr(self, "get_configured_channel_id"):
+                    try:
+                        ch_id = self.get_configured_channel_id()
+                        if self.client.is_channel_system_default(ch_id):
+                            badge_name = "badge-output.png"
+                    except Exception:
+                        pass
+                if not badge_name:
+                    badge_name = "badge-channel.png"
 
         if not badge_name:
             badge_name = "badge-channel.png"
@@ -764,6 +789,14 @@ class WaveControllerBaseAction(ActionBase):
         font_path = settings.get("font_path", "")
 
         telemetry_info = self.get_hardware_telemetry_info()
+        is_default_output = False
+        if hasattr(self, "get_configured_channel_id"):
+            try:
+                ch_id = self.get_configured_channel_id()
+                is_default_output = self.client.is_channel_system_default(ch_id)
+            except Exception:
+                pass
+
         midground_key = (
             volume,
             is_muted,
@@ -775,6 +808,7 @@ class WaveControllerBaseAction(ActionBase):
             font_path,
             self.get_appearance(),
             self.get_accent_color(),
+            is_default_output,
             tuple(sorted(telemetry_info.items())) if isinstance(telemetry_info, dict) else None
         )
 
@@ -944,14 +978,43 @@ class WaveControllerBaseAction(ActionBase):
                     mid_draw.text((int((164 - 20) * RENDER_SCALE), int((80 - 10) * RENDER_SCALE)), vol_text, font=font_vol, fill=vol_color)
 
                 # Badge icon positioned at top right matching Wave style (30px unscaled, y = 9px)
+                badge_img = None
                 if not self.get_hide_type_badge():
-                    badge_target_size = int(30 * RENDER_SCALE)
-                    badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=badge_target_size)
-                    if badge_img is not None:
+                    if is_default_output:
+                        pill_text = "Default Output"
+                        f_p = font_badge_sm
+                        try:
+                            pw = f_p.getlength(pill_text)
+                        except Exception:
+                            pw = len(pill_text) * int(6 * RENDER_SCALE)
+                        pad_x = int(5 * RENDER_SCALE)
+                        bw = int(pw + pad_x * 2)
+                        bh = int(14 * RENDER_SCALE)
                         bx2 = int(190 * RENDER_SCALE)
-                        bx1 = bx2 - badge_img.width
+                        bx1 = bx2 - bw
                         by1 = int(9 * RENDER_SCALE)
-                        mid_img.paste(badge_img, (bx1, by1), badge_img)
+                        mid_draw.rounded_rectangle(
+                            [(bx1, by1), (bx2, by1 + bh)],
+                            radius=int(4 * RENDER_SCALE),
+                            fill=(35, 75, 45, 255),
+                            outline=(74, 222, 128, 180),
+                            width=max(1, int(1 * RENDER_SCALE))
+                        )
+                        mid_draw.text(
+                            (bx1 + bw // 2, by1 + bh // 2),
+                            pill_text,
+                            font=f_p,
+                            fill=(74, 222, 128, 255),
+                            anchor="mm"
+                        )
+                    else:
+                        badge_target_size = int(30 * RENDER_SCALE)
+                        badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=badge_target_size)
+                        if badge_img is not None:
+                            bx2 = int(190 * RENDER_SCALE)
+                            bx1 = bx2 - badge_img.width
+                            by1 = int(9 * RENDER_SCALE)
+                            mid_img.paste(badge_img, (bx1, by1), badge_img)
 
             # Icon Placement & Rendering
             icon_drawn = False
@@ -1014,7 +1077,12 @@ class WaveControllerBaseAction(ActionBase):
 
             # Title & Subtitle Text
             left_bound = 12 + icon_w + 6
-            right_bound = 155 if (badge_img is not None or locals().get("s1_x") is not None) else 192
+            if is_default_output and not self.get_hide_type_badge():
+                right_bound = 108
+            elif badge_img is not None or locals().get("s1_x") is not None:
+                right_bound = 155
+            else:
+                right_bound = 192
             max_width = right_bound - left_bound - 4
 
             max_width_scaled = max_width * RENDER_SCALE
@@ -1178,6 +1246,13 @@ class WaveControllerBaseAction(ActionBase):
         subtitle_text = target_subtitle or ""
         effective_icon_identifier = custom_icon_path if custom_icon_path else self.get_target_icon_path()
         telemetry_info = self.get_hardware_telemetry_info()
+        is_default_output = False
+        if hasattr(self, "get_configured_channel_id"):
+            try:
+                ch_id = self.get_configured_channel_id()
+                is_default_output = self.client.is_channel_system_default(ch_id)
+            except Exception:
+                pass
 
         # Resolve fonts
         bundled_bold = os.path.join(self.plugin_base.PATH, "assets", "fonts", "DejaVuSans-Bold.ttf") if hasattr(self, "plugin_base") and hasattr(self.plugin_base, "PATH") else ""
@@ -1199,11 +1274,12 @@ class WaveControllerBaseAction(ActionBase):
                 f_title = ImageFont.truetype(font_file, int(14 * RENDER_SCALE))
                 f_badge = ImageFont.truetype(font_file, int(12 * RENDER_SCALE))
                 f_badge_md = ImageFont.truetype(font_file, int(12 * RENDER_SCALE))
+                f_pill = ImageFont.truetype(font_file, int(10 * RENDER_SCALE))
                 f_vol = ImageFont.truetype(font_file, int(14.5 * RENDER_SCALE))
             except Exception:
-                f_title = f_badge = f_badge_md = f_vol = ImageFont.load_default()
+                f_title = f_badge = f_badge_md = f_pill = f_vol = ImageFont.load_default()
         else:
-            f_title = f_badge = f_badge_md = f_vol = ImageFont.load_default()
+            f_title = f_badge = f_badge_md = f_pill = f_vol = ImageFont.load_default()
 
         card_x1 = int(1 * RENDER_SCALE)
         card_y1 = int(1 * RENDER_SCALE)
@@ -1221,6 +1297,7 @@ class WaveControllerBaseAction(ActionBase):
             self.get_appearance(),
             self.get_accent_color(),
             self.get_hide_type_badge(),
+            is_default_output,
             tuple(sorted(telemetry_info.items())) if isinstance(telemetry_info, dict) else None
         )
 
@@ -1312,13 +1389,16 @@ class WaveControllerBaseAction(ActionBase):
                     mid_draw.rounded_rectangle([(bx1, by1), (bx2, by2)], radius=int(5 * RENDER_SCALE), fill=(35, 37, 42, 255), outline=(80, 85, 95, 180), width=max(1, int(1 * RENDER_SCALE)))
                     mid_draw.text(((bx1 + bx2) // 2, (by1 + by2) // 2), "48V", font=f_badge_md, fill=(160, 165, 175, 255), anchor="mm")
             elif not self.get_hide_type_badge():
-                b_size = int(30 * RENDER_SCALE)
-                bx1 = bx2 - b_size
-                by1 = card_y1 + int(9 * RENDER_SCALE)
-                badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=b_size)
-                if badge_img is not None:
-                    mid_img.paste(badge_img, (bx1, by1), badge_img)
-                badge_w = b_size + int(8 * RENDER_SCALE)
+                if is_default_output:
+                    badge_w = 0
+                else:
+                    b_size = int(30 * RENDER_SCALE)
+                    bx1 = bx2 - b_size
+                    by1 = card_y1 + int(9 * RENDER_SCALE)
+                    badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=b_size)
+                    if badge_img is not None:
+                        mid_img.paste(badge_img, (bx1, by1), badge_img)
+                    badge_w = b_size + int(8 * RENDER_SCALE)
 
             # Header Row: Title & Subtitle with full available width
             title_x = icon_x + icon_size + int(8 * RENDER_SCALE)
@@ -1337,8 +1417,56 @@ class WaveControllerBaseAction(ActionBase):
                 mid_draw.text((title_x, title_y), disp_title, font=f_title, fill=palette["text_primary"], anchor="lt")
                 disp_sub = fit_text(subtitle_text, f_badge, max_text_w)
                 mid_draw.text((title_x, sub_y), disp_sub, font=f_badge, fill=palette["text_secondary"], anchor="lt")
+                if is_default_output and not self.get_hide_type_badge():
+                    pill_text = "Default Output"
+                    try:
+                        pw = f_pill.getlength(pill_text)
+                    except Exception:
+                        pw = len(pill_text) * int(6 * RENDER_SCALE)
+                    pad_x = int(6 * RENDER_SCALE)
+                    bw = int(pw + pad_x * 2)
+                    bh = int(14 * RENDER_SCALE)
+                    by1 = sub_y + int(14 * RENDER_SCALE)
+                    mid_draw.rounded_rectangle(
+                        [(title_x, by1), (title_x + bw, by1 + bh)],
+                        radius=int(4 * RENDER_SCALE),
+                        fill=(35, 75, 45, 255),
+                        outline=(74, 222, 128, 180),
+                        width=max(1, int(1 * RENDER_SCALE))
+                    )
+                    mid_draw.text(
+                        (title_x + bw // 2, by1 + bh // 2),
+                        pill_text,
+                        font=f_pill,
+                        fill=(74, 222, 128, 255),
+                        anchor="mm"
+                    )
             else:
                 mid_draw.text((title_x, title_y), disp_title, font=f_title, fill=palette["text_primary"], anchor="lm")
+                if is_default_output and not self.get_hide_type_badge():
+                    pill_text = "Default Output"
+                    try:
+                        pw = f_pill.getlength(pill_text)
+                    except Exception:
+                        pw = len(pill_text) * int(6 * RENDER_SCALE)
+                    pad_x = int(6 * RENDER_SCALE)
+                    bw = int(pw + pad_x * 2)
+                    bh = int(14 * RENDER_SCALE)
+                    by1 = title_y + int(16 * RENDER_SCALE)
+                    mid_draw.rounded_rectangle(
+                        [(title_x, by1), (title_x + bw, by1 + bh)],
+                        radius=int(4 * RENDER_SCALE),
+                        fill=(35, 75, 45, 255),
+                        outline=(74, 222, 128, 180),
+                        width=max(1, int(1 * RENDER_SCALE))
+                    )
+                    mid_draw.text(
+                        (title_x + bw // 2, by1 + bh // 2),
+                        pill_text,
+                        font=f_pill,
+                        fill=(74, 222, 128, 255),
+                        anchor="mm"
+                    )
 
             # 3. Bottom Row: Speaker / Mute icon & Lowered Fader Track
             slider_y = card_y1 + int(74 * RENDER_SCALE)

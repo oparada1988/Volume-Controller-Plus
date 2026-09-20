@@ -14,6 +14,7 @@ from gi.repository import Gtk
 from .actions.ChannelMaster.ChannelMaster import ChannelMaster
 from .actions.SubMix.SubMix import SubMix
 from .actions.MixMaster.MixMaster import MixMaster
+from .actions.ChannelFXToggle.ChannelFXToggle import ChannelFXToggle
 
 class PluginTemplate(PluginBase):
     def __init__(self):
@@ -62,6 +63,23 @@ class PluginTemplate(PluginBase):
             action_support = supported_inputs
         )
         self.add_action_holder(self.mix_master_holder)
+
+        # 4. Toggle Microphone / Channel FX Action
+        fx_supported_inputs = {
+            Input.Key: ActionInputSupport.SUPPORTED,
+            Input.Dial: ActionInputSupport.SUPPORTED,
+            Input.Touchscreen: ActionInputSupport.SUPPORTED
+        }
+        fx_icon = Gtk.Image(file=os.path.join(self.PATH, "assets", "icons", "audio-fx.png"))
+        self.channel_fx_holder = ActionHolder(
+            plugin_base = self,
+            action_base = ChannelFXToggle,
+            action_id = "com_oparada_WaveControllerPlugin::ChannelFXToggle",
+            action_name = "Toggle FX",
+            icon = fx_icon,
+            action_support = fx_supported_inputs
+        )
+        self.add_action_holder(self.channel_fx_holder)
 
         # Register plugin
         self.register(
