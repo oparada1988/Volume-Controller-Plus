@@ -137,6 +137,8 @@ class WaveControllerClient:
                         "mix_states": data.get("mix_states", {}),
                         "device_aliases": data.get("device_aliases", {}),
                         "assigned_apps": data.get("assigned_apps", {}),
+                        "channel_fx": data.get("channel_fx", {}),
+                        "raw_config": data,
                         "use_system_theme": data.get("use_system_theme", False),
                         "default_output_channel_id": def_ch_id,
                         "system_defaults_enabled": sys_defs_enabled
@@ -511,23 +513,149 @@ class WaveControllerClient:
             self._cached_hardware_status["phantom_48v"] = new_val
         return new_val
 
-    def get_fx_status(self, channel_id: str = "mic") -> bool:
-        """Returns whether real-time DSP FX are enabled for a specific channel."""
+    def get_fx_status(self, channel_id: str = "mic", effect_id: str = None) -> bool:
+        """Returns whether real-time DSP FX (master rack or specific effect) are enabled for a specific channel."""
         ch_clean = channel_id.strip() if channel_id else "mic"
-        # 1. Fast path from cached channels data if present
-        with self._cache_lock:
-            if self._cached_channels_data and "channels" in self._cached_channels_data:
-                for c in self._cached_channels_data["channels"]:
-                    if c.get("id") == ch_clean and "fx_enabled" in c:
-                        return bool(c["fx_enabled"])
-        # 2. Query direct IPC command
-        res = self.send_command({"command": "get_fx_status", "channel_id": ch_clean}, timeout=0.25)
+        
+        # 1. Query direct IPC command
+        cmd_payload = {"command": "get_fx_status", "channel_id": ch_clean}
+        if effect_id:
+            cmd_payload["effect_id"] = effect_id
+        res = self.send_command(cmd_payload, timeout=0.25)
         if "enabled" in res:
             return bool(res["enabled"])
+
+        # 2. Fast path from cached channels data if present (for master channel rack)
+        if not effect_id:
+            with self._cache_lock:
+                if self._cached_channels_data and "channels" in self._cached_channels_data:
+                    for c in self._cached_channels_data["channels"]:
+                        if c.get("id") == ch_clean and "fx_enabled" in c:
+                            return bool(c["fx_enabled"])
+
         # 3. Fallback to config file
         cfg = self._load_config_fallback()
         ch_fx = cfg.get("channel_fx", {}).get(ch_clean, {})
-        return bool(ch_fx.get("enabled", True))
+        master_enabled = bool(ch_fx.get("enabled", True))
+        if not effect_id:
+            return master_enabled
+
+        if not master_enabled:
+            return False
+
+        raw_cfg = cfg.get("raw_config", {})
+        if effect_id.startswith("dsp_"):
+            globally_active = bool(raw_cfg.get(effect_id, True))
+            chan_active = bool(ch_fx.get(effect_id, globally_active))
+            return chan_active and globally_active
+        else:
+            chan_ext = dict(ch_fx.get("external_plugins", {}))
+            is_active = bool(chan_ext.get(effect_id, False))
+            globally_ext = dict(raw_cfg.get("external_plugin_enabled", {}))
+            is_global = bool(globally_ext.get(effect_id, True))
+            return is_active and is_global
+
+    def get_channel_fx(self, channel_id: str = "mic") -> dict:
+        """Returns full channel FX status: master enabled, built-in effects, and external plugins."""
+        ch_clean = channel_id.strip() if channel_id else "mic"
+        res = self.send_command({"command": "get_channel_fx", "channel_id": ch_clean}, timeout=0.35)
+        if res.get("status") == "ok":
+            return res
+
+        # Fallback from local config.json
+        cfg = self._load_config_fallback()
+        raw_cfg = cfg.get("raw_config", {})
+        ch_fx = cfg.get("channel_fx", {}).get(ch_clean, {})
+        master_enabled = bool(ch_fx.get("enabled", True))
+
+        builtin_effects = {}
+        for effect_key, title, default_val in [
+            ("dsp_highpass", "Low-Cut / High-Pass Filter (80 Hz)", True),
+            ("dsp_noise_suppression", "AI Noise Suppression (RNNoise)", True),
+            ("dsp_noise_gate", "Broadcast Noise Gate", False),
+            ("dsp_equalizer", "Parametric Vocal Equalizer", True),
+            ("dsp_compressor", "Broadcast Vocal Compressor", True),
+            ("dsp_deesser", "Vocal De-Esser", False),
+            ("dsp_limiter", "Broadcast Peak Limiter", True),
+        ]:
+            globally_active = bool(raw_cfg.get(effect_key, default_val))
+            chan_active = bool(ch_fx.get(effect_key, globally_active))
+            builtin_effects[effect_key] = {
+                "enabled": chan_active and globally_active,
+                "globally_enabled": globally_active,
+                "title": title
+            }
+
+        chan_ext = dict(ch_fx.get("external_plugins", {}))
+        return {
+            "status": "ok",
+            "channel_id": ch_clean,
+            "master_enabled": master_enabled,
+            "builtin_effects": builtin_effects,
+            "external_plugins": chan_ext,
+            "available_external_plugins": []
+        }
+
+    def get_effect_status(self, channel_id: str = "mic", effect_id: str = "dsp_noise_suppression") -> bool:
+        """Convenience method returning boolean status of an individual audio effect."""
+        return self.get_fx_status(channel_id=channel_id, effect_id=effect_id)
+
+    def toggle_channel_effect(self, channel_id: str = "mic", effect_id: str = "dsp_noise_suppression", enabled: bool = None) -> bool:
+        """Toggles or sets a specific processor on a channel (built-in or LV2 plugin)."""
+        ch_clean = channel_id.strip() if channel_id else "mic"
+        payload = {"command": "toggle_channel_effect", "channel_id": ch_clean, "effect_id": effect_id}
+        if enabled is not None:
+            payload["enabled"] = bool(enabled)
+            
+        res = self.send_command(payload, timeout=0.45)
+        new_val = res.get("enabled")
+        if new_val is not None:
+            return bool(new_val)
+            
+        # Fallback optimistic toggle
+        curr = self.get_effect_status(ch_clean, effect_id)
+        return not curr
+
+    def get_available_effects(self, channel_id: str = "mic") -> list:
+        """
+        Returns list of tuples (effect_id, display_label, category, is_active)
+        for populating StreamController settings dropdowns.
+        """
+        fx_data = self.get_channel_fx(channel_id)
+        results = []
+
+        # 1. Built-in DSP effects in canonical audio signal flow order
+        builtin_specs = [
+            ("dsp_highpass", "High-Pass Filter (80 Hz)", "Filter"),
+            ("dsp_noise_suppression", "AI Noise Suppression (RNNoise)", "Noise Reduction"),
+            ("dsp_noise_gate", "Broadcast Noise Gate", "Dynamics"),
+            ("dsp_equalizer", "Parametric Vocal Equalizer", "Equalizer"),
+            ("dsp_compressor", "Broadcast Vocal Compressor", "Dynamics"),
+            ("dsp_deesser", "Vocal De-Esser", "Equalizer"),
+            ("dsp_limiter", "Broadcast Peak Limiter", "Dynamics"),
+        ]
+        builtin_states = fx_data.get("builtin_effects", {})
+        for eff_id, label, cat in builtin_specs:
+            st = builtin_states.get(eff_id, {})
+            is_active = bool(st.get("enabled", False))
+            results.append((eff_id, label, cat, is_active))
+
+        # 2. Hostable External LV2 Plugins
+        ext_list = fx_data.get("available_external_plugins", [])
+        if ext_list:
+            for p in ext_list:
+                p_id = p.get("id", "")
+                name = p.get("name", p_id)
+                cat = p.get("category", "LV2 Plugin")
+                is_active = bool(p.get("enabled", False))
+                results.append((p_id, f"{name} ({cat})", cat, is_active))
+        else:
+            # Fallback to any enabled in config
+            ext_map = fx_data.get("external_plugins", {})
+            for p_id, active in ext_map.items():
+                results.append((p_id, p_id, "LV2 Plugin", bool(active)))
+
+        return results
 
     def toggle_fx(self, channel_id: str = "mic") -> bool:
         """Toggles real-time DSP FX on/off for a channel with instant local cache update."""

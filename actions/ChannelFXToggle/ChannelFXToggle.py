@@ -275,16 +275,14 @@ class ChannelFXToggle(ActionBase):
                     name = c.get("name", c_id.capitalize())
                     clean_name = name[len("Elgato "):] if name.startswith("Elgato ") else name
                     
-                    is_source = (c.get("type") == "source" or c_id in ("mic", "microphone"))
+                    is_source = (c.get("type") == "source" or c_id in ("mic", "microphone") or any(k in c_id.lower() for k in ("mic", "wave_xlr", "input", "capture")))
                     if is_source:
-                        source_channels.append((c_id, f"🎙 {clean_name}"))
-                    else:
-                        other_channels.append((c_id, clean_name))
+                        source_channels.append((c_id, clean_name))
 
-                # Prioritize microphone/source channels at top
-                self.channels_list = source_channels + other_channels
+                # Physical microphone/input channels only
+                self.channels_list = source_channels if source_channels else [("mic", "Microphone")]
             else:
-                self.channels_list = [("mic", "🎙 Microphone")]
+                self.channels_list = [("mic", "Microphone")]
 
             self.channel_model = Gtk.StringList()
             for _, display_name in self.channels_list:
@@ -317,7 +315,7 @@ class ChannelFXToggle(ActionBase):
             ch_id, ch_name = self.channels_list[selected_idx]
             settings = self.get_settings() or {}
             settings["channel_id"] = ch_id
-            settings["channel_name"] = ch_name.replace("🎙 ", "")
+            settings["channel_name"] = ch_name
             self.set_settings(settings)
             self.initial_load_status()
 

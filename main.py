@@ -15,6 +15,7 @@ from .actions.ChannelMaster.ChannelMaster import ChannelMaster
 from .actions.SubMix.SubMix import SubMix
 from .actions.MixMaster.MixMaster import MixMaster
 from .actions.ChannelFXToggle.ChannelFXToggle import ChannelFXToggle
+from .actions.ChannelEffectToggle.ChannelEffectToggle import ChannelEffectToggle
 
 class PluginTemplate(PluginBase):
     def __init__(self):
@@ -80,6 +81,21 @@ class PluginTemplate(PluginBase):
             action_support = fx_supported_inputs
         )
         self.add_action_holder(self.channel_fx_holder)
+
+        # 5. Toggle Individual Audio Effect Action
+        magic_icon_path = os.path.join(self.PATH, "assets", "icons", "magic.svg")
+        if not os.path.exists(magic_icon_path) and os.path.exists("/home/oscar/magic.svg"):
+            magic_icon_path = "/home/oscar/magic.svg"
+        effect_icon = Gtk.Image(file=magic_icon_path)
+        self.channel_effect_holder = ActionHolder(
+            plugin_base = self,
+            action_base = ChannelEffectToggle,
+            action_id = "com_oparada_WaveControllerPlugin::ChannelEffectToggle",
+            action_name = "Effect Toggle",
+            icon = effect_icon,
+            action_support = fx_supported_inputs
+        )
+        self.add_action_holder(self.channel_effect_holder)
 
         # Register plugin
         self.register(
