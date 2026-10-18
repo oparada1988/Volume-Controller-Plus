@@ -380,6 +380,18 @@ class WaveControllerBaseAction(ActionBase):
         """Override in subclasses to intercept touchscreen events (e.g. 48V badge toggle)."""
         return False
 
+    def get_default_badge_text(self) -> str:
+        """Override in subclasses to provide dynamic system default pill text ('Default Output' / 'Default Input')."""
+        return ""
+
+    def is_channel_link_supported(self) -> bool:
+        """Override in Channel actions to declare volume link across mixes support."""
+        return False
+
+    def is_channel_linked(self) -> bool:
+        """Override in Channel actions to report current volume link state across mixes."""
+        return False
+
     def event_callback(self, event: InputEvent, data: dict = None):
         if event == Input.Dial.Events.TURN_CW:
             step_val = self.get_step_size()
@@ -789,13 +801,8 @@ class WaveControllerBaseAction(ActionBase):
         font_path = settings.get("font_path", "")
 
         telemetry_info = self.get_hardware_telemetry_info()
-        is_default_output = False
-        if hasattr(self, "get_configured_channel_id"):
-            try:
-                ch_id = self.get_configured_channel_id()
-                is_default_output = self.client.is_channel_system_default(ch_id)
-            except Exception:
-                pass
+        default_badge_text = self.get_default_badge_text()
+        has_default_badge = bool(default_badge_text)
 
         midground_key = (
             volume,
@@ -808,7 +815,7 @@ class WaveControllerBaseAction(ActionBase):
             font_path,
             self.get_appearance(),
             self.get_accent_color(),
-            is_default_output,
+            default_badge_text,
             tuple(sorted(telemetry_info.items())) if isinstance(telemetry_info, dict) else None
         )
 
@@ -980,8 +987,8 @@ class WaveControllerBaseAction(ActionBase):
                 # Badge icon positioned at top right matching Wave style (30px unscaled, y = 9px)
                 badge_img = None
                 if not self.get_hide_type_badge():
-                    if is_default_output:
-                        pill_text = "Default Output"
+                    if has_default_badge:
+                        pill_text = default_badge_text
                         f_p = font_badge_sm
                         try:
                             pw = f_p.getlength(pill_text)
@@ -1246,13 +1253,10 @@ class WaveControllerBaseAction(ActionBase):
         subtitle_text = target_subtitle or ""
         effective_icon_identifier = custom_icon_path if custom_icon_path else self.get_target_icon_path()
         telemetry_info = self.get_hardware_telemetry_info()
-        is_default_output = False
-        if hasattr(self, "get_configured_channel_id"):
-            try:
-                ch_id = self.get_configured_channel_id()
-                is_default_output = self.client.is_channel_system_default(ch_id)
-            except Exception:
-                pass
+        default_badge_text = self.get_default_badge_text()
+        has_default_badge = bool(default_badge_text)
+        is_link_supported = self.is_channel_link_supported()
+        is_linked = self.is_channel_linked() if is_link_supported else False
 
         # Resolve fonts
         bundled_bold = os.path.join(self.plugin_base.PATH, "assets", "fonts", "DejaVuSans-Bold.ttf") if hasattr(self, "plugin_base") and hasattr(self.plugin_base, "PATH") else ""
@@ -1297,7 +1301,9 @@ class WaveControllerBaseAction(ActionBase):
             self.get_appearance(),
             self.get_accent_color(),
             self.get_hide_type_badge(),
-            is_default_output,
+            default_badge_text,
+            is_link_supported,
+            is_linked,
             tuple(sorted(telemetry_info.items())) if isinstance(telemetry_info, dict) else None
         )
 
@@ -1358,21 +1364,56 @@ class WaveControllerBaseAction(ActionBase):
                     mid_draw.rounded_rectangle([(cx_i - 8*RENDER_SCALE, cy_i - 2*RENDER_SCALE), (cx_i - 5*RENDER_SCALE, cy_i + 5*RENDER_SCALE)], radius=2*RENDER_SCALE, fill=(220, 220, 230, 255))
                     mid_draw.rounded_rectangle([(cx_i + 5*RENDER_SCALE, cy_i - 2*RENDER_SCALE), (cx_i + 8*RENDER_SCALE, cy_i + 5*RENDER_SCALE)], radius=2*RENDER_SCALE, fill=(220, 220, 230, 255))
 
-            # Header Row: Right Badge (Hardware 48V or compact type badge)
+            # Helper to draw the Volume Link button
+            def draw_link_button(lx1, ly1, lx2, ly2):
+                lb_w = lx2 - lx1
+                lb_h = ly2 - ly1
+                if is_linked:
+                    link_bg = (25, 45, 75, 255)
+                    link_outline = palette.get("accent", (59, 130, 246, 230))
+                    link_width = max(1, int(1.2 * RENDER_SCALE))
+                    link_tint = palette.get("accent", (59, 130, 246, 255))
+                else:
+                    link_bg = (35, 37, 42, 255)
+                    link_outline = (70, 75, 85, 180)
+                    link_width = max(1, int(1 * RENDER_SCALE))
+                    link_tint = (145, 150, 165, 230)
+
+                mid_draw.rounded_rectangle(
+                    [(lx1, ly1), (lx2, ly2)],
+                    radius=int(5 * RENDER_SCALE),
+                    fill=link_bg,
+                    outline=link_outline,
+                    width=link_width
+                )
+                link_ico_name = "insert-link-symbolic" if is_linked else "mail-attachment-symbolic"
+                link_ico = self.resolve_icon_as_pil(link_ico_name, target_size=int(13 * RENDER_SCALE))
+                if link_ico is not None:
+                    try:
+                        r_l, g_l, b_l, a_l = link_ico.split()
+                        tinted_l = Image.new("RGBA", link_ico.size, link_tint)
+                        tinted_l.putalpha(a_l)
+                        iw, ih = tinted_l.size
+                        ix = lx1 + (lb_w - iw) // 2
+                        iy = ly1 + (lb_h - ih) // 2
+                        mid_img.paste(tinted_l, (ix, iy), tinted_l)
+                    except Exception:
+                        pass
+
+            # Header Row: Right Badge (Hardware 48V, Volume Link Button, or App Badge)
             badge_w = 0
             bx2 = card_x2 - int(10 * RENDER_SCALE)
             if telemetry_info and telemetry_info.get("is_hardware"):
                 phantom_48v = telemetry_info.get("phantom_48v", False)
                 bh = int(18 * RENDER_SCALE)
-                bw = int(48 * RENDER_SCALE)
+                bw = int(44 * RENDER_SCALE)
                 bx1 = bx2 - bw
-                by1 = icon_y + (icon_size - bh) // 2
+                by1 = card_y1 + int(9 * RENDER_SCALE)
                 by2 = by1 + bh
-                badge_w = bw + int(8 * RENDER_SCALE)
 
                 if phantom_48v:
                     mid_draw.rounded_rectangle([(bx1, by1), (bx2, by2)], radius=int(5 * RENDER_SCALE), fill=(45, 33, 16, 255), outline=(245, 158, 11, 230), width=max(1, int(1.2 * RENDER_SCALE)))
-                    lx = bx1 + int(11 * RENDER_SCALE)
+                    lx = bx1 + int(10 * RENDER_SCALE)
                     ly = (by1 + by2) // 2
                     s = RENDER_SCALE
                     poly = [
@@ -1384,21 +1425,48 @@ class WaveControllerBaseAction(ActionBase):
                         (lx + 0.5*s, ly - 0.5*s)
                     ]
                     mid_draw.polygon(poly, fill=(251, 191, 36, 255))
-                    mid_draw.text((bx1 + int(28 * RENDER_SCALE), ly), "48V", font=f_badge_md, fill=(251, 191, 36, 255), anchor="mm")
+                    mid_draw.text((bx1 + int(26 * RENDER_SCALE), ly), "48V", font=f_badge_md, fill=(251, 191, 36, 255), anchor="mm")
                 else:
                     mid_draw.rounded_rectangle([(bx1, by1), (bx2, by2)], radius=int(5 * RENDER_SCALE), fill=(35, 37, 42, 255), outline=(80, 85, 95, 180), width=max(1, int(1 * RENDER_SCALE)))
                     mid_draw.text(((bx1 + bx2) // 2, (by1 + by2) // 2), "48V", font=f_badge_md, fill=(160, 165, 175, 255), anchor="mm")
-            elif not self.get_hide_type_badge():
-                if is_default_output:
-                    badge_w = 0
-                else:
-                    b_size = int(30 * RENDER_SCALE)
-                    bx1 = bx2 - b_size
-                    by1 = card_y1 + int(9 * RENDER_SCALE)
+
+                badge_w = bw + int(8 * RENDER_SCALE)
+
+                # If volume link is supported, stack the Link button directly below the 48V badge!
+                if is_link_supported:
+                    ly1 = by2 + int(4 * RENDER_SCALE)
+                    ly2 = ly1 + bh
+                    draw_link_button(bx1, ly1, bx2, ly2)
+
+            elif is_link_supported:
+                # Standard channel with volume link support (Spotify, Discord, Virtual Channels, etc.)
+                lw = int(32 * RENDER_SCALE)
+                lh = int(18 * RENDER_SCALE)
+                lx2 = bx2
+                lx1 = lx2 - lw
+                ly1 = card_y1 + int(9 * RENDER_SCALE)
+                ly2 = ly1 + lh
+                draw_link_button(lx1, ly1, lx2, ly2)
+                badge_w = lw + int(8 * RENDER_SCALE)
+
+                if not self.get_hide_type_badge() and not has_default_badge:
+                    b_size = int(22 * RENDER_SCALE)
                     badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=b_size)
                     if badge_img is not None:
-                        mid_img.paste(badge_img, (bx1, by1), badge_img)
-                    badge_w = b_size + int(8 * RENDER_SCALE)
+                        tbx2 = lx1 - int(6 * RENDER_SCALE)
+                        tbx1 = tbx2 - b_size
+                        tby1 = ly1 + (lh - b_size) // 2
+                        mid_img.paste(badge_img, (tbx1, tby1), badge_img)
+                        badge_w = (card_x2 - tbx1) + int(6 * RENDER_SCALE)
+
+            elif not self.get_hide_type_badge() and not has_default_badge:
+                b_size = int(30 * RENDER_SCALE)
+                bx1 = bx2 - b_size
+                by1 = card_y1 + int(9 * RENDER_SCALE)
+                badge_img = self.resolve_badge_image(title_text, subtitle_text, target_size=b_size)
+                if badge_img is not None:
+                    mid_img.paste(badge_img, (bx1, by1), badge_img)
+                badge_w = b_size + int(8 * RENDER_SCALE)
 
             # Header Row: Title & Subtitle with full available width
             title_x = icon_x + icon_size + int(8 * RENDER_SCALE)
@@ -1417,12 +1485,11 @@ class WaveControllerBaseAction(ActionBase):
                 mid_draw.text((title_x, title_y), disp_title, font=f_title, fill=palette["text_primary"], anchor="lt")
                 disp_sub = fit_text(subtitle_text, f_badge, max_text_w)
                 mid_draw.text((title_x, sub_y), disp_sub, font=f_badge, fill=palette["text_secondary"], anchor="lt")
-                if is_default_output and not self.get_hide_type_badge():
-                    pill_text = "Default Output"
+                if has_default_badge and not self.get_hide_type_badge():
                     try:
-                        pw = f_pill.getlength(pill_text)
+                        pw = f_pill.getlength(default_badge_text)
                     except Exception:
-                        pw = len(pill_text) * int(6 * RENDER_SCALE)
+                        pw = len(default_badge_text) * int(6 * RENDER_SCALE)
                     pad_x = int(6 * RENDER_SCALE)
                     bw = int(pw + pad_x * 2)
                     bh = int(14 * RENDER_SCALE)
@@ -1436,19 +1503,18 @@ class WaveControllerBaseAction(ActionBase):
                     )
                     mid_draw.text(
                         (title_x + bw // 2, by1 + bh // 2),
-                        pill_text,
+                        default_badge_text,
                         font=f_pill,
                         fill=(74, 222, 128, 255),
                         anchor="mm"
                     )
             else:
                 mid_draw.text((title_x, title_y), disp_title, font=f_title, fill=palette["text_primary"], anchor="lm")
-                if is_default_output and not self.get_hide_type_badge():
-                    pill_text = "Default Output"
+                if has_default_badge and not self.get_hide_type_badge():
                     try:
-                        pw = f_pill.getlength(pill_text)
+                        pw = f_pill.getlength(default_badge_text)
                     except Exception:
-                        pw = len(pill_text) * int(6 * RENDER_SCALE)
+                        pw = len(default_badge_text) * int(6 * RENDER_SCALE)
                     pad_x = int(6 * RENDER_SCALE)
                     bw = int(pw + pad_x * 2)
                     bh = int(14 * RENDER_SCALE)
@@ -1462,7 +1528,7 @@ class WaveControllerBaseAction(ActionBase):
                     )
                     mid_draw.text(
                         (title_x + bw // 2, by1 + bh // 2),
-                        pill_text,
+                        default_badge_text,
                         font=f_pill,
                         fill=(74, 222, 128, 255),
                         anchor="mm"

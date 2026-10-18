@@ -68,9 +68,13 @@ class MixMaster(WaveControllerBaseAction):
         mixes = data.get("mixes", [])
         m = self._match_mix(m_id, mixes)
         
-        mix_name = m.get("name", m_id.capitalize())
-        mix_type = m.get("type", "sink").lower()
+        mix_name = m.get("name")
+        if not mix_name or mix_name.lower() == m_id.lower():
+            mix_name = m_id.replace("_", " ").title()
+        elif "_" in mix_name:
+            mix_name = mix_name.replace("_", " ").title()
 
+        mix_type = str(m.get("type", "sink")).lower()
         if mix_type in ("source", "input", "mic") or any(k in m_id.lower() for k in ("source", "chat", "record", "mic", "input")):
             dev_display = "Input"
         else:
@@ -83,9 +87,31 @@ class MixMaster(WaveControllerBaseAction):
         data = self.client.get_channels_and_mixes()
         mixes = data.get("mixes", [])
         m = self._match_mix(m_id, mixes)
-        if m.get("icon"):
-            return m.get("icon")
+        mix_type = str(m.get("type", "sink")).lower()
+        is_source_mix = mix_type in ("source", "input", "mic") or any(k in m_id.lower() for k in ("source", "chat", "record", "mic", "input"))
+
+        icon = m.get("icon")
+        if icon:
+            # If it's a source/input mix, avoid fallback headphones icon
+            if is_source_mix and icon in ("audio-headphones-symbolic", "audio-headphones"):
+                return "audio-input-microphone-symbolic"
+            return icon
+
+        if is_source_mix:
+            return "audio-input-microphone-symbolic"
         return "audio-headphones-symbolic"
+
+    def get_default_badge_text(self) -> str:
+        m_id = self.get_configured_mix_id()
+        if not self.client.is_mix_system_default(m_id):
+            return ""
+        data = self.client.get_channels_and_mixes()
+        mixes = data.get("mixes", [])
+        m = self._match_mix(m_id, mixes)
+        mix_type = str(m.get("type", "sink")).lower()
+        if mix_type in ("source", "input", "mic") or any(k in m_id.lower() for k in ("source", "chat", "record", "mic", "input")):
+            return "Default Input"
+        return "Default Output"
 
     def handle_volume_change(self, delta: int):
         m_id = self.get_configured_mix_id()

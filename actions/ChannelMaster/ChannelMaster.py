@@ -174,29 +174,36 @@ class ChannelMaster(WaveControllerBaseAction):
             "gain_db": hw.get("gain_db", 0)
         }
 
-    def handle_touch_tap(self, data: dict) -> bool:
-        """Handles touchscreen taps. Tapping the 48V badge toggles phantom power, or default output for virtual channels."""
-        telemetry = self.get_hardware_telemetry_info()
-        if not telemetry or not isinstance(data, dict):
-            # Check if this is a virtual channel: tapping the badge area toggles it as system default!
-            ch_id = self.get_configured_channel_id()
-            data_top = self.client.get_channels_and_mixes()
-            channels = data_top.get("channels", [])
+    def is_channel_link_supported(self) -> bool:
+        return True
+
+    def is_channel_linked(self) -> bool:
+        ch_id = self.get_configured_channel_id()
+        return self.client.is_channel_linked(ch_id)
+
+    def get_default_badge_text(self) -> str:
+        ch_id = self.get_configured_channel_id()
+        if self.client.is_channel_system_default(ch_id):
+            data = self.client.get_channels_and_mixes()
+            channels = data.get("channels", [])
             c = self._match_channel(ch_id, channels)
-            if str(c.get("type", "")).lower() == "virtual" or c.get("expose_sink"):
-                x = data.get("x")
-                y = data.get("y")
-                if x is None or y is None:
-                    return False
-                rel_x = x % 200
-                rel_y = y
-                # Badge area at top-right
-                if rel_x >= 130 and 10 <= rel_y <= 55:
-                    is_def = self.client.is_channel_system_default(ch_id)
-                    self.client.set_channel_system_default(ch_id, not is_def)
-                    self._cached_midground = None
-                    self.update_ui_rendering(force=True)
-                    return True
+            ch_type = str(c.get("type", "")).lower()
+            if ch_type in ("input", "source", "mic") or ch_id.lower() in ("mic", "microphone"):
+                return "Default Input"
+            return "Default Output"
+        return ""
+
+    def handle_touch_tap(self, data: dict) -> bool:
+        """
+        Handles touchscreen taps according to link and 48V rules:
+        1. When hardware 48V phantom power is supported:
+           - Tapping specifically on the 48V badge toggles phantom power.
+           - Tapping specifically on the Link icon toggles volume link across mixes.
+        2. Anything else (Spotify, Discord, Games, virtual channels, standard mics):
+           - Tapping on the touchscreen slice toggles volume link across mixes.
+        Physical rotary dial push remains strictly dedicated to Mute/Unmute.
+        """
+        if not isinstance(data, dict):
             return False
 
         x = data.get("x")
@@ -204,25 +211,40 @@ class ChannelMaster(WaveControllerBaseAction):
         if x is None or y is None:
             return False
 
-        # Stream Deck + dial screen slice width is 200px (4 dials x 200 = 800)
         rel_x = x % 200
         rel_y = y
-        style = self.get_ui_style()
+        ch_id = self.get_configured_channel_id()
+        telemetry = self.get_hardware_telemetry_info()
+        supports_48v = bool(telemetry and telemetry.get("is_hardware"))
 
-        if style == "wave":
-            # Wave style: 48V badge is at top right: rel_x in [130, 195], rel_y in [10, 40]
-            if rel_x >= 130 and 10 <= rel_y <= 40:
-                self.client.toggle_phantom_power()
-                self.update_ui_rendering(force=True)
-                return True
+        if supports_48v:
+            # Rule 1: Input channel where 48V is supported (Wave XLR)
+            # Stacked Right Column: rel_x >= 130
+            if rel_x >= 130:
+                if rel_y <= 30:
+                    # Top-Right: 48V Phantom Power Badge
+                    self.client.toggle_phantom_power()
+                    self._cached_wave_midground = None
+                    self._cached_midground = None
+                    self.update_ui_rendering(force=True)
+                    return True
+                elif 31 <= rel_y <= 62:
+                    # Mid-Right: Volume Link Across Mixes Button
+                    self.client.toggle_channel_link(ch_id)
+                    self._cached_wave_midground = None
+                    self._cached_midground = None
+                    self.update_ui_rendering(force=True)
+                    return True
+            # Tapping elsewhere on 48V hardware slice absorbs touch event (does not mute - dial push is mute)
+            return True
         else:
-            # Slot 2 (48V badge) touch bounding box in DX style: rel_x in [130, 200], rel_y in [40, 75]
-            if rel_x >= 130 and 40 <= rel_y <= 75:
-                self.client.toggle_phantom_power()
-                self.update_ui_rendering(force=True)
-                return True
-
-        return False
+            # Rule 2: Anything else (Spotify, Discord, Games, virtual channels, standard mics):
+            # Tapping on the action toggles volume link across mixes!
+            self.client.toggle_channel_link(ch_id)
+            self._cached_wave_midground = None
+            self._cached_midground = None
+            self.update_ui_rendering(force=True)
+            return True
 
     def get_current_peak_val(self) -> float:
         ch_id = self.get_configured_channel_id()

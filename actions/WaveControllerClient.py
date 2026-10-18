@@ -33,6 +33,7 @@ class WaveControllerClient:
         self._last_channels_time = 0.0
         self._cached_devices = []
         self._cached_hardware_status = {}
+        self._cached_channel_links = {}
 
         self._cmd_sock = None
         self._cmd_lock = threading.Lock()
@@ -121,12 +122,15 @@ class WaveControllerClient:
                     def_ch_id = data.get("default_output_channel_id", "")
                     sys_defs_enabled = data.get("system_defaults_enabled", False)
                     channels = data.get("channels", [])
+                    ch_states = data.get("channel_states", {})
                     for c in channels:
                         c_id = c.get("id", "")
                         is_def = (c_id == def_ch_id) and bool(sys_defs_enabled)
                         c["is_default"] = is_def
                         if str(c.get("type", "")).lower() == "virtual":
                             c["icon"] = "video-display-symbolic" if is_def else "audio-card-symbolic"
+                        c_st = ch_states.get(c_id, {})
+                        c["linked"] = any(isinstance(st, dict) and st.get("linked", False) for st in c_st.values()) if c_st else False
 
                     fallback_data = {
                         "status": "ok",
@@ -274,6 +278,12 @@ class WaveControllerClient:
                                         ch["is_default"] = (ch.get("id") == new_def)
                                         if str(ch.get("type", "")).lower() == "virtual":
                                             ch["icon"] = "video-display-symbolic" if ch["is_default"] else "audio-card-symbolic"
+                            if "channel_links" in res and isinstance(res["channel_links"], dict):
+                                self._cached_channel_links = res["channel_links"]
+                                for ch in self._cached_channels_data.get("channels", []):
+                                    cid = ch.get("id")
+                                    if cid in res["channel_links"]:
+                                        ch["linked"] = bool(res["channel_links"][cid])
 
                 if len(buf) > 32768:
                     buf = ""
@@ -715,3 +725,70 @@ class WaveControllerClient:
 
         cmd = {"command": "set_channel_system_default", "channel_id": channel_id, "is_default": bool(is_default)}
         self._send_command_async(cmd)
+
+    def is_channel_linked(self, channel_id: str) -> bool:
+        """Returns whether the channel volume is linked across all mixes."""
+        if not channel_id:
+            return False
+        with self._cache_lock:
+            if hasattr(self, "_cached_channel_links") and channel_id in self._cached_channel_links:
+                return bool(self._cached_channel_links[channel_id])
+            if self._cached_channels_data:
+                for c in self._cached_channels_data.get("channels", []):
+                    if c.get("id") == channel_id and "linked" in c:
+                        return bool(c["linked"])
+        fallback = self._load_config_fallback()
+        for c in fallback.get("channels", []):
+            if c.get("id") == channel_id and "linked" in c:
+                return bool(c["linked"])
+        return False
+
+    def toggle_channel_link(self, channel_id: str) -> bool:
+        """Toggles channel volume link across all mixes with instant local cache update."""
+        if not channel_id:
+            return False
+        curr = self.is_channel_linked(channel_id)
+        new_val = not curr
+        with self._cache_lock:
+            if not hasattr(self, "_cached_channel_links"):
+                self._cached_channel_links = {}
+            self._cached_channel_links[channel_id] = new_val
+            if self._cached_channels_data:
+                for c in self._cached_channels_data.get("channels", []):
+                    if c.get("id") == channel_id:
+                        c["linked"] = new_val
+        self._send_command_async({"command": "toggle_channel_link", "channel_id": channel_id})
+        return new_val
+
+    def set_channel_link(self, channel_id: str, linked: bool):
+        """Sets channel volume link across all mixes."""
+        if not channel_id:
+            return
+        with self._cache_lock:
+            if not hasattr(self, "_cached_channel_links"):
+                self._cached_channel_links = {}
+            self._cached_channel_links[channel_id] = bool(linked)
+            if self._cached_channels_data:
+                for c in self._cached_channels_data.get("channels", []):
+                    if c.get("id") == channel_id:
+                        c["linked"] = bool(linked)
+        self._send_command_async({"command": "set_channel_link", "channel_id": channel_id, "linked": bool(linked)})
+
+    def is_mix_system_default(self, mix_id: str) -> bool:
+        """Returns whether a mix is currently the designated system default audio source or sink."""
+        if not mix_id:
+            return False
+        with self._cache_lock:
+            if self._cached_channels_data:
+                for m in self._cached_channels_data.get("mixes", []):
+                    if m.get("id") == mix_id:
+                        return bool(m.get("is_default", False))
+        fallback = self._load_config_fallback()
+        for m in fallback.get("mixes", []):
+            if m.get("id") == mix_id:
+                return bool(m.get("is_default", False))
+        raw_cfg = fallback.get("raw_config", {})
+        sys_defs = raw_cfg.get("system_defaults", {})
+        if isinstance(sys_defs, dict):
+            return bool(sys_defs.get(mix_id, False))
+        return False
